@@ -1,0 +1,3 @@
+matrix_completion_1.dat-s 837.74
+matrix_completion_2.dat-s 15445.0
+matrix_completion_3.dat-s 51602.0

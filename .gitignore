@@ -1,3 +1,10 @@
+hallar/src/share
+hallar/src/libexec
+hallar/py/plots
+.DS_Store
+misc/
+.vscode/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
