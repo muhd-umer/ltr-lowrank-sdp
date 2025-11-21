@@ -60,7 +60,7 @@ def compute_gradient_fd(L_beta, Y): # computing gradient using finite difference
     return grad
 
 def plot_metrics(graph, beta, rank, objective_values, constraint_violations, reference_value):
-    iterations = range(1, len(objective_values))
+    iterations = range(1, len(objective_values) + 1)
     fig, ax1 = plt.subplots()
 
     # Plot the objective function values
