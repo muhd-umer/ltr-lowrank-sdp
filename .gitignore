@@ -4,6 +4,7 @@ hallar/py/plots
 .DS_Store
 misc/
 .vscode/
+benchmarks/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
