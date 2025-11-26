@@ -31,6 +31,9 @@
 /** @brief Enable Conjugate Gradient method */
 #define USE_CG
 
+/** @brief Default relative tolerance for oracle rank eigenvalue cutoff */
+#define LORADS_ORACLE_EPS (1e-6)
+
 #ifdef MEMDEBUG
 #include "memwatch.h"
 #endif
@@ -74,6 +77,14 @@ typedef enum{
     LORADS_MAXITER,              ///< Maximum iterations reached
     LORADS_TIME_LIMIT,           ///< Time limit reached
 }lorads_status;
+
+/**
+ * @brief Oracle rank computation methods
+ */
+typedef enum{
+    LORADS_ORACLE_RANK_GRAM = 0,  ///< Use Gram matrix eigenvalues
+    LORADS_ORACLE_RANK_NAIVE = 1  ///< Use full matrix eigen decomposition
+} lorads_oracle_rank_method;
 
 /** @brief Infinity value used in the solver */
 #define LORADS_INFINITY          1e+30
@@ -126,6 +137,7 @@ typedef struct{
     lorads_int maxALMIter;      ///< Maximum ALM iterations
     lorads_int maxADMMIter;     ///< Maximum ADMM iterations
     double timesLogRank;        ///< Factor for rank estimation
+    lorads_int fixedRank;       ///< Fixed rank override for all cones (-1 to disable)
     lorads_int rhoFreq;         ///< Frequency of penalty updates
     double rhoFactor;           ///< Penalty increase factor
     double ALMRhoFactor;        ///< ALM penalty increase factor
@@ -140,6 +152,7 @@ typedef struct{
     lorads_int reoptLevel;      ///< Level of reoptimization
     lorads_int dyrankLevel;     ///< Level of dynamic rank adjustment
     bool highAccMode;           ///< Whether to use high accuracy mode
+    lorads_oracle_rank_method oracleRankMethod; ///< Oracle rank computation method
 } lorads_params;
 
 /** @brief Disable penalty method */

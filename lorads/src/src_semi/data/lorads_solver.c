@@ -37,6 +37,9 @@ extern void LORADSInitSolver(lorads_solver *ASolver, lorads_int nRows, lorads_in
 
     ASolver->nRows = nRows;   // constralorads_int number
     ASolver->nCones = nCones; // blk number
+    ASolver->oracleMethod = LORADS_ORACLE_RANK_GRAM;
+    ASolver->oracleEpsilon = LORADS_ORACLE_EPS;
+    LORADS_ZERO(&ASolver->log_ctx, char, sizeof(lorads_logging_ctx));
 
     LORADS_INIT(ASolver->rowRHS, double, nRows);
     LORADS_MEMCHECK(ASolver->rowRHS);
@@ -393,13 +396,14 @@ extern void destroyPreprocess(lorads_solver *ASolver)
  * @param ASolver Pointer to the LORADS solver structure
  * @param blkDims Array containing block dimensions for each cone
  * @param timesRank Factor for rank determination
+ * @param fixedRank Fixed rank override for all cones (-1 disables)
  * @details This function:
  * - Calculates the optimal rank for each SDP cone
  * - Handles both fixed and variable rank determination
  * - Uses heuristics to determine rank based on sparsity and cone size
  * - Updates solver's rank_max array with the calculated values
  */
-extern void LORADSDetermineRank(lorads_solver *ASolver, lorads_int *blkDims, double timesRank)
+extern void LORADSDetermineRank(lorads_solver *ASolver, lorads_int *blkDims, double timesRank, lorads_int fixedRank)
 {
     lorads_int nCones = ASolver->nCones;
     lorads_int *rankElem;
@@ -407,8 +411,15 @@ extern void LORADSDetermineRank(lorads_solver *ASolver, lorads_int *blkDims, dou
     LORADS_MEMCHECK(rankElem);
     LORADS_INIT(ASolver->rank_max, lorads_int, nCones);
     LORADS_MEMCHECK(ASolver->rank_max);
+    int use_fixed_rank = (fixedRank > 0);
     for  (lorads_int iCone = 0; iCone < nCones; ++iCone)
     {
+        if (use_fixed_rank){
+            lorads_int capped_rank = LORADS_MIN(fixedRank, blkDims[iCone]);
+            rankElem[iCone] = LORADS_MAX(1, capped_rank);
+            ASolver->rank_max[iCone] = rankElem[iCone];
+            continue;
+        }
         lorads_sdp_cone *ACone = ASolver->SDPCones[iCone];
         lorads_int nnzRows = 0;
         ACone->nnzStat(ACone->coneData, &nnzRows);

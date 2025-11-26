@@ -5,8 +5,12 @@
 #include <Windows.h>
 #else
 #include <sys/time.h>
+#include <sys/stat.h>
 #endif
 #include <signal.h>
+#include <errno.h>
+#include <limits.h>
+#include <string.h>
 
 #ifdef MEMDEBUG
 #include "memwatch.h"
@@ -56,6 +60,45 @@ static double my_clock(void)
     return (1e-06 * t.tv_usec + t.tv_sec);
 }
 #endif
+
+static lorads_int mkdir_recursive(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) == 0)
+    {
+        return S_ISDIR(st.st_mode) ? 0 : -1;
+    }
+    if (errno != ENOENT)
+    {
+        return -1;
+    }
+    char *parent = strdup(path);
+    if (!parent)
+    {
+        return -1;
+    }
+    char *slash = strrchr(parent, '/');
+    if (slash && slash != parent)
+    {
+        *slash = '\0';
+        if (strlen(parent) > 0 && mkdir_recursive(parent) != 0)
+        {
+            free(parent);
+            return -1;
+        }
+    }
+    free(parent);
+    return mkdir(path, 0755);
+}
+
+extern lorads_int LUtilEnsureDir(const char *path)
+{
+    if (!path)
+    {
+        return -1;
+    }
+    return mkdir_recursive(path);
+}
 
 /**
  * @brief Partition function for integer indices and double values

@@ -207,6 +207,13 @@ extern "C"
  * @brief Gets current timestamp
  * @return Current timestamp in seconds
  */
+extern lorads_int LUtilEnsureDir(const char *path);
+
+/**
+ * @brief ensure a directory exists
+ * @param path directory path
+ * @return 0 on success, -1 otherwise
+ */
 extern double LUtilGetTimeStamp(void);
 
 /**

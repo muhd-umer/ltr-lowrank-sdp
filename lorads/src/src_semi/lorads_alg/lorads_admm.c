@@ -15,6 +15,7 @@
 #include "lorads_alg_common.h"
 #include "lorads_vec_opts.h"
 #include "lorads_cgs.h"
+#include "lorads_logging.h"
 
 /**
  * @brief Print ADMM iteration log
@@ -29,28 +30,41 @@
  * - Conjugate gradient iterations
  * - Elapsed time
  */
-extern void ADMMPrintLog(lorads_admm_state *admm_iter_state, double time){
+static void ADMMPrintLog(lorads_solver *ASolver, lorads_admm_state *admm_iter_state, double time, lorads_int current_rank, lorads_int oracle_rank){
 #ifdef INT32
-    printf("ADMM Iter:%d pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f cgIter:%d Time:%3.2f\n",
-            admm_iter_state->iter, admm_iter_state->primal_objective_value,
-            admm_iter_state->dual_objective_value, admm_iter_state->l_1_primal_infeasibility,
-            admm_iter_state->l_inf_primal_infeasibility, admm_iter_state->primal_dual_gap,
-            admm_iter_state->rho, (int) ((double)admm_iter_state->cg_iter / (double)admm_iter_state->nBlks), time);
+    lorads_log_printf(ASolver, "ADMM Iter:%d pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f cgIter:%d CurrRank:%lld OracleRank:%lld Time:%3.2f\n",
+                      admm_iter_state->iter, admm_iter_state->primal_objective_value,
+                      admm_iter_state->dual_objective_value, admm_iter_state->l_1_primal_infeasibility,
+                      admm_iter_state->l_inf_primal_infeasibility, admm_iter_state->primal_dual_gap,
+                      admm_iter_state->rho, (int) ((double)admm_iter_state->cg_iter / (double)admm_iter_state->nBlks), (long long)current_rank, (long long)oracle_rank, time);
 #endif
 #ifdef MAC_INT64
-    printf("ADMM Iter:%lld pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f cgIter:%d Time:%3.2f\n",
-           admm_iter_state->iter, admm_iter_state->primal_objective_value,
-           admm_iter_state->dual_objective_value, admm_iter_state->l_1_primal_infeasibility,
-           admm_iter_state->l_inf_primal_infeasibility, admm_iter_state->primal_dual_gap,
-           admm_iter_state->rho, (int) ((double)admm_iter_state->cg_iter / (double)admm_iter_state->nBlks), time);
+    lorads_log_printf(ASolver, "ADMM Iter:%lld pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f cgIter:%d CurrRank:%lld OracleRank:%lld Time:%3.2f\n",
+                      admm_iter_state->iter, admm_iter_state->primal_objective_value,
+                      admm_iter_state->dual_objective_value, admm_iter_state->l_1_primal_infeasibility,
+                      admm_iter_state->l_inf_primal_infeasibility, admm_iter_state->primal_dual_gap,
+                      admm_iter_state->rho, (int) ((double)admm_iter_state->cg_iter / (double)admm_iter_state->nBlks), (long long)current_rank, (long long)oracle_rank, time);
 #endif
 #ifdef UNIX_INT64
-    printf("ADMM Iter:%ld pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f cgIter:%d Time:%3.2f\n",
-           admm_iter_state->iter, admm_iter_state->primal_objective_value,
-           admm_iter_state->dual_objective_value, admm_iter_state->l_1_primal_infeasibility,
-           admm_iter_state->l_inf_primal_infeasibility, admm_iter_state->primal_dual_gap,
-           admm_iter_state->rho, (int) ((double)admm_iter_state->cg_iter / (double)admm_iter_state->nBlks), time);
+    lorads_log_printf(ASolver, "ADMM Iter:%ld pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f cgIter:%d CurrRank:%lld OracleRank:%lld Time:%3.2f\n",
+                      admm_iter_state->iter, admm_iter_state->primal_objective_value,
+                      admm_iter_state->dual_objective_value, admm_iter_state->l_1_primal_infeasibility,
+                      admm_iter_state->l_inf_primal_infeasibility, admm_iter_state->primal_dual_gap,
+                      admm_iter_state->rho, (int) ((double)admm_iter_state->cg_iter / (double)admm_iter_state->nBlks), (long long)current_rank, (long long)oracle_rank, time);
 #endif
+}
+
+static void ADMMRecordState(lorads_solver *ASolver, lorads_admm_state *admm_iter_state, double phase_time)
+{
+    lorads_int current_rank = lorads_sum_rank(ASolver);
+    lorads_int oracle_rank = lorads_compute_oracle_rank(ASolver, 2);
+    double elapsed = 0.0;
+    if (ASolver->log_ctx.solve_start_time > 0)
+    {
+        elapsed = LUtilGetTimeStamp() - ASolver->log_ctx.solve_start_time;
+    }
+    lorads_append_trajectory(ASolver, 2, admm_iter_state->iter, elapsed, admm_iter_state->primal_objective_value, admm_iter_state->dual_objective_value, admm_iter_state->l_1_primal_infeasibility, admm_iter_state->l_inf_primal_infeasibility, admm_iter_state->primal_dual_gap, current_rank, oracle_rank, admm_iter_state->cg_iter);
+    ADMMPrintLog(ASolver, admm_iter_state, phase_time, current_rank, oracle_rank);
 }
 
 /**
@@ -118,10 +132,13 @@ extern lorads_int LORADSADMMOptimize(lorads_params *params, lorads_solver *ASolv
         aFunc->updateDimacsADMM(ASolver, ASolver->var->U, ASolver->var->V, ASolver->var->uLp, ASolver->var->vLp);
         admm_iter_state->primal_objective_value = ASolver->pObjVal;
         admm_iter_state->dual_objective_value = ASolver->dObjVal;
-        admm_iter_state->l_inf_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1] * (1 + ASolver->bRHSNrm1) / (1 + ASolver->bRHSNrmInf);
+        admm_iter_state->l_1_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1];
+        admm_iter_state->l_inf_primal_infeasibility = admm_iter_state->l_1_primal_infeasibility * (1 + ASolver->bRHSNrm1) / (1 + ASolver->bRHSNrmInf);
         admm_iter_state->primal_dual_gap = ASolver->dimacError[LORADS_DIMAC_ERROR_PDGAP];
+        admm_iter_state->l_2_primal_infeasibility = admm_iter_state->l_1_primal_infeasibility * (1 + ASolver->bRHSNrm1) / (1 + ASolver->bRHSNrm2);
+        ADMMRecordState(ASolver, admm_iter_state, LUtilGetTimeStamp() - origTime);
         if (admm_iter_state->l_inf_primal_infeasibility >= 1e10 || admm_iter_state->primal_dual_gap >= 1-1e-8){
-            printf("Numerical Error!");
+            lorads_log_printf(ASolver, "Numerical Error!\n");
             return RET_CODE_NUM_ERR;
         }
         if (admm_iter_state->primal_dual_gap <= params->phase2Tol * 5)
@@ -151,7 +168,6 @@ extern lorads_int LORADSADMMOptimize(lorads_params *params, lorads_solver *ASolv
             admm_iter_state->dual_objective_value = ASolver->dObjVal;
             admm_iter_state->primal_dual_gap = ASolver->dimacError[LORADS_DIMAC_ERROR_PDGAP];
             admm_iter_state->l_1_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1];
-            ADMMPrintLog(admm_iter_state, LUtilGetTimeStamp() - origTime);
             return RET_CODE_OK;
         }
         LORADSUpdateDualVar(ASolver, admm_iter_state->rho);
@@ -179,13 +195,12 @@ extern lorads_int LORADSADMMOptimize(lorads_params *params, lorads_solver *ASolv
             admm_iter_state->dual_objective_value = ASolver->dObjVal;
             admm_iter_state->primal_dual_gap = ASolver->dimacError[LORADS_DIMAC_ERROR_PDGAP];
             admm_iter_state->l_1_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1];
-            ADMMPrintLog(admm_iter_state, LUtilGetTimeStamp() - origTime);
             if (LUtilGetTimeStamp() - timeSolveStart >= params->timeSecLimit){
                 return RET_CODE_TIME_OUT;
             }
         }
         if (admm_iter_state->primal_dual_gap <= params->phase2Tol*1e-3 && admm_iter_state->l_1_primal_infeasibility <= params->phase2Tol*1e-3){
-            printf("Early Stop When DIMACS Errors Are Well-Satisfied");
+            lorads_log_printf(ASolver, "Early Stop When DIMACS Errors Are Well-Satisfied\n");
             return RET_CODE_OK;
         }
         admm_iter_state->iter++;
@@ -230,10 +245,7 @@ extern lorads_int LORADSADMMOptimize_reopt(lorads_params *params, lorads_solver 
     admm_iter_state->l_1_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1];
     admm_iter_state->l_inf_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1] * (1 + ASolver->bRHSNrm1) / (1 + ASolver->bRHSNrmInf);
     admm_iter_state->l_2_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1] * (1 + ASolver->bRHSNrm1) / (1 + ASolver->bRHSNrm2);
-    printf("enter admm reopt \n");
-    ADMMPrintLog(admm_iter_state, 0);
-
-
+    lorads_log_printf(ASolver, "enter admm reopt \n");
     ASolver->cgTime = 0.0;
 
     double cur_rho_max = params->rhoMax;
@@ -249,7 +261,7 @@ extern lorads_int LORADSADMMOptimize_reopt(lorads_params *params, lorads_solver 
     while (admm_iter_state->iter <= params->maxADMMIter || admm_iter_state->primal_dual_gap >= params->phase2Tol ||
             admm_iter_state->l_1_primal_infeasibility >= params->phase2Tol){
         if (admm_iter_state->iter >= iter_celling){
-            ADMMPrintLog(admm_iter_state, 0);
+            ADMMRecordState(ASolver, admm_iter_state, 0);
 #ifdef INI32
             printf("exit admm since maxiter greater than iter_celling:%d\n", iter_celling);
 #endif
@@ -274,9 +286,9 @@ extern lorads_int LORADSADMMOptimize_reopt(lorads_params *params, lorads_solver 
         admm_iter_state->l_1_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1];
         admm_iter_state->l_inf_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1] * (1 + ASolver->bRHSNrm1) / (1 + ASolver->bRHSNrmInf);
         admm_iter_state->l_2_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1] * (1 + ASolver->bRHSNrm1) / (1 + ASolver->bRHSNrm2);
+        ADMMRecordState(ASolver, admm_iter_state, LUtilGetTimeStamp() - origTime);
         if (admm_iter_state->l_inf_primal_infeasibility >= 1e10 || admm_iter_state->primal_dual_gap >= 1-1e-8){
-            ADMMPrintLog(admm_iter_state, LUtilGetTimeStamp() - origTime);
-            printf("Numerical Error!\n");
+            lorads_log_printf(ASolver, "Numerical Error!\n");
             return RET_CODE_NUM_ERR;
         }
 
@@ -297,7 +309,7 @@ extern lorads_int LORADSADMMOptimize_reopt(lorads_params *params, lorads_solver 
         }
 
         if (bad_pd >= 200){
-            printf("------");
+            lorads_log_printf(ASolver, "------\n");
             return RET_CODE_OK;
         }
 
@@ -309,7 +321,6 @@ extern lorads_int LORADSADMMOptimize_reopt(lorads_params *params, lorads_solver 
             admm_iter_state->primal_dual_gap = ASolver->dimacError[LORADS_DIMAC_ERROR_PDGAP];
             admm_iter_state->l_1_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1];
             if (admm_iter_state->primal_dual_gap <= params->phase2Tol){
-                ADMMPrintLog(admm_iter_state, LUtilGetTimeStamp() - origTime);
                 return RET_CODE_OK;
             }
         }
@@ -338,18 +349,16 @@ extern lorads_int LORADSADMMOptimize_reopt(lorads_params *params, lorads_solver 
             admm_iter_state->dual_objective_value = ASolver->dObjVal;
             admm_iter_state->primal_dual_gap = ASolver->dimacError[LORADS_DIMAC_ERROR_PDGAP];
             admm_iter_state->l_1_primal_infeasibility = ASolver->dimacError[LORADS_DIMAC_ERROR_CONSTRVIO_L1];
-            ADMMPrintLog(admm_iter_state, LUtilGetTimeStamp() - origTime);
             if (LUtilGetTimeStamp() - timeSolveStart >= params->timeSecLimit){
                 return RET_CODE_TIME_OUT;
             }
         }
         if (admm_iter_state->primal_dual_gap <= params->phase2Tol*1e-3 && admm_iter_state->l_1_primal_infeasibility <= params->phase2Tol*1e-3){
-            printf("Early Stop When DIMACS Errors Are Well-Satisfied");
+            lorads_log_printf(ASolver, "Early Stop When DIMACS Errors Are Well-Satisfied\n");
             return RET_CODE_OK;
         }
         admm_iter_state->iter++;
     }
-    ADMMPrintLog(admm_iter_state, LUtilGetTimeStamp() - origTime);
     return RET_CODE_OK;
 }
 

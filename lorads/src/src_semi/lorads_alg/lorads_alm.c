@@ -16,6 +16,7 @@
 #include "lorads_solver.h"
 #include "lorads_vec_opts.h"
 #include "lorads_alg_common.h"
+#include "lorads_logging.h"
 int MAX_ALM_SUB_ITER;
 
 /**
@@ -900,30 +901,43 @@ static void rootNum0PrintInfo(lorads_int minIter){
 #endif
 }
 
-static void ALMPrintLog(lorads_alm_state *alm_state_pointer, double time){
+static void ALMPrintLog(lorads_solver *ASolver, lorads_alm_state *alm_state_pointer, double time, lorads_int current_rank, lorads_int oracle_rank){
 #ifdef INT32
-    printf("ALM OuterIter:%d InnerIter:%d pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f Time:%3.2f\n",
-           alm_state_pointer->outerIter, alm_state_pointer->innerIter,
-           alm_state_pointer->primal_objective_value, alm_state_pointer->dual_objective_value,
-           alm_state_pointer->l_1_primal_infeasibility, alm_state_pointer->l_inf_primal_infeasibility,
-           alm_state_pointer->primal_dual_gap, alm_state_pointer->rho, time);
+    lorads_log_printf(ASolver, "ALM OuterIter:%d InnerIter:%d pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f CurrRank:%lld OracleRank:%lld Time:%3.2f\n",
+                      alm_state_pointer->outerIter, alm_state_pointer->innerIter,
+                      alm_state_pointer->primal_objective_value, alm_state_pointer->dual_objective_value,
+                      alm_state_pointer->l_1_primal_infeasibility, alm_state_pointer->l_inf_primal_infeasibility,
+                      alm_state_pointer->primal_dual_gap, alm_state_pointer->rho, (long long)current_rank, (long long)oracle_rank, time);
 #endif
 
 #ifdef UNIX_INT64
-    printf("OuterIter:%ld InnerIter:%ld pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f Time:%3.2f\n",
-           alm_state_pointer->outerIter, alm_state_pointer->innerIter,
-           alm_state_pointer->primal_objective_value, alm_state_pointer->dual_objective_value,
-           alm_state_pointer->l_1_primal_infeasibility, alm_state_pointer->l_inf_primal_infeasibility,
-           alm_state_pointer->primal_dual_gap, alm_state_pointer->rho, time);
+    lorads_log_printf(ASolver, "OuterIter:%ld InnerIter:%ld pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f CurrRank:%lld OracleRank:%lld Time:%3.2f\n",
+                      alm_state_pointer->outerIter, alm_state_pointer->innerIter,
+                      alm_state_pointer->primal_objective_value, alm_state_pointer->dual_objective_value,
+                      alm_state_pointer->l_1_primal_infeasibility, alm_state_pointer->l_inf_primal_infeasibility,
+                      alm_state_pointer->primal_dual_gap, alm_state_pointer->rho, (long long)current_rank, (long long)oracle_rank, time);
 #endif
 
 #ifdef MAC_INT64
-    printf("OuterIter:%lld InnerIter:%lld pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f Time:%3.2f\n",
-           alm_state_pointer->outerIter, alm_state_pointer->innerIter,
-           alm_state_pointer->primal_objective_value, alm_state_pointer->dual_objective_value,
-           alm_state_pointer->l_1_primal_infeasibility, alm_state_pointer->l_inf_primal_infeasibility,
-           alm_state_pointer->primal_dual_gap, alm_state_pointer->rho, time);
+    lorads_log_printf(ASolver, "OuterIter:%lld InnerIter:%lld pObj:%5.5e dObj:%5.5e pInfea(1):%5.5e pInfea(Inf):%5.5e pdGap:%5.5e rho:%3.2f CurrRank:%lld OracleRank:%lld Time:%3.2f\n",
+                      alm_state_pointer->outerIter, alm_state_pointer->innerIter,
+                      alm_state_pointer->primal_objective_value, alm_state_pointer->dual_objective_value,
+                      alm_state_pointer->l_1_primal_infeasibility, alm_state_pointer->l_inf_primal_infeasibility,
+                      alm_state_pointer->primal_dual_gap, alm_state_pointer->rho, (long long)current_rank, (long long)oracle_rank, time);
 #endif
+}
+
+static void ALMRecordState(lorads_solver *ASolver, lorads_alm_state *alm_state_pointer, double phase_time)
+{
+    lorads_int current_rank = lorads_sum_rank(ASolver);
+    lorads_int oracle_rank = lorads_compute_oracle_rank(ASolver, 1);
+    double elapsed = 0.0;
+    if (ASolver->log_ctx.solve_start_time > 0)
+    {
+        elapsed = LUtilGetTimeStamp() - ASolver->log_ctx.solve_start_time;
+    }
+    lorads_append_trajectory(ASolver, 1, alm_state_pointer->outerIter, elapsed, alm_state_pointer->primal_objective_value, alm_state_pointer->dual_objective_value, alm_state_pointer->l_1_primal_infeasibility, alm_state_pointer->l_inf_primal_infeasibility, alm_state_pointer->primal_dual_gap, current_rank, oracle_rank, ASolver->cgIter);
+    ALMPrintLog(ASolver, alm_state_pointer, phase_time, current_rank, oracle_rank);
 }
 
 /**
@@ -1153,7 +1167,7 @@ extern lorads_int LORADS_ALMOptimize_reopt(lorads_params *params, lorads_solver 
                     goto PRINT_AND_EXIT;
                 }
             }
-            ALMPrintLog(alm_iter_state, LUtilGetTimeStamp() - ori_start);
+            ALMRecordState(ASolver, alm_iter_state, LUtilGetTimeStamp() - ori_start);
             if (LUtilGetTimeStamp() - timeSolveStart >= params->timeSecLimit){
                 goto PRINT_AND_EXIT;
             }
@@ -1179,10 +1193,10 @@ extern lorads_int LORADS_ALMOptimize_reopt(lorads_params *params, lorads_solver 
     alm_iter_state->l_1_dual_infeasibility = 99; // does not evaluate dual error
     alm_iter_state->l_inf_dual_infeasibility = 99; // does not evaluate dual error
     PRINT_AND_EXIT:
-    printf("-----------------------------------------------------------------------\n");
-    printf("Exit ALM:\n");
-    ALMPrintLog(alm_iter_state, LUtilGetTimeStamp() - ori_start);
-    printf("-----------------------------------------------------------------------\n");
+    lorads_log_printf(ASolver, "-----------------------------------------------------------------------\n");
+    lorads_log_printf(ASolver, "Exit ALM:\n");
+    ALMRecordState(ASolver, alm_iter_state, LUtilGetTimeStamp() - ori_start);
+    lorads_log_printf(ASolver, "-----------------------------------------------------------------------\n");
     return retcode;
 }
 
@@ -1434,7 +1448,7 @@ extern lorads_int LORADS_ALMOptimize(lorads_params *params, lorads_solver *ASolv
             // {
             //     goto PRINT_AND_EXIT;
             // }
-            ALMPrintLog(alm_iter_state, LUtilGetTimeStamp() - ori_start);
+            ALMRecordState(ASolver, alm_iter_state, LUtilGetTimeStamp() - ori_start);
             if (LUtilGetTimeStamp() - timeSolveStart >= params->timeSecLimit){
                 goto PRINT_AND_EXIT;
             }
@@ -1462,10 +1476,10 @@ extern lorads_int LORADS_ALMOptimize(lorads_params *params, lorads_solver *ASolv
     alm_iter_state->l_1_dual_infeasibility = 99; // does not evaluate dual error
     alm_iter_state->l_inf_dual_infeasibility = 99; // does not evaluate dual error
     PRINT_AND_EXIT:
-        printf("-----------------------------------------------------------------------\n");
-        printf("Exit ALM:\n");
-        ALMPrintLog(alm_iter_state, LUtilGetTimeStamp() - ori_start);
-        printf("-----------------------------------------------------------------------\n");
+        lorads_log_printf(ASolver, "-----------------------------------------------------------------------\n");
+        lorads_log_printf(ASolver, "Exit ALM:\n");
+        ALMRecordState(ASolver, alm_iter_state, LUtilGetTimeStamp() - ori_start);
+        lorads_log_printf(ASolver, "-----------------------------------------------------------------------\n");
         return retcode;
 }
 

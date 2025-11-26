@@ -30,6 +30,7 @@
 #include "lorads_alm.h"
 #include "lorads_admm.h"
 #include "lorads_alg_common.h"
+#include "lorads_logging.h"
 
 /**
  * @brief Initialize default parameters for the solver
@@ -62,6 +63,7 @@ void initCommandLineArgs(lorads_params *params)
     params->maxALMIter = 200;                  ///< Maximum ALM iterations
     params->maxADMMIter = 10000;              ///< Maximum ADMM iterations
     params->timesLogRank = 2.0;               ///< Factor for rank estimation
+    params->fixedRank = -1;                   ///< Fixed rank override (-1 disables)
     params->rhoFreq = 5;                      ///< Frequency of penalty parameter updates
     params->rhoFactor = 1.2;                  ///< Factor for increasing penalty parameter
     params->ALMRhoFactor = 2.0;               ///< Factor for increasing ALM penalty parameter
@@ -76,6 +78,7 @@ void initCommandLineArgs(lorads_params *params)
     params->reoptLevel = 2;                   ///< Level of reoptimization
     params->dyrankLevel = 2;                  ///< Level of dynamic rank adjustment
     params->highAccMode = false;              ///< Whether to use high accuracy mode
+    params->oracleRankMethod = LORADS_ORACLE_RANK_GRAM; ///< Oracle rank computation method
 }
 
 /**
@@ -123,6 +126,7 @@ static struct option long_options[] = {
         {"maxALMIter", required_argument, 0, 1004},        ///< Maximum number of ALM iterations
         {"maxADMMIter", required_argument, 0, 1005},       ///< Maximum number of ADMM iterations
         {"timesLogRank", required_argument, 0, 1006},      ///< Factor for rank estimation (initial rank = log(n) * timesLogRank)
+        {"fixedRank", required_argument, 0, 1022},         ///< Fixed rank override for all cones
         {"rhoFreq", required_argument, 0, 1007},           ///< Frequency of penalty parameter updates
         {"rhoFactor", required_argument, 0, 1008},         ///< Factor for increasing penalty parameter
         {"ALMRhoFactor", required_argument, 0, 1009},      ///< Factor for increasing ALM penalty parameter
@@ -137,6 +141,7 @@ static struct option long_options[] = {
         {"reoptLevel", required_argument, 0, 1018},        ///< Level of reoptimization (0-3, higher means more reoptimization)
         {"dyrankLevel", required_argument, 0, 1019},       ///< Level of dynamic rank adjustment (0-3, higher means more adjustment)
         {"highAccMode", required_argument, 0, 1020},       ///< Enable/disable high accuracy mode (0/1)
+        {"oracleRankNaive", no_argument, 0, 1021},         ///< Use naive oracle rank computation
         {0, 0, 0, 0}                                      ///< End of options array
 };
 
@@ -162,6 +167,7 @@ static void printInput(lorads_params params){
     printf("maxALMIter = %d\n", params.maxALMIter);
     printf("maxADMMIter = %d\n", params.maxADMMIter);
     printf("timesLogRank = %f\n", params.timesLogRank);
+    printf("fixedRank = %d\n", params.fixedRank);
     printf("rhoFreq = %d\n", params.rhoFreq);
     printf("rhoFactor = %f\n", params.rhoFactor);
     printf("ALMRhoFactor = %f\n", params.ALMRhoFactor);
@@ -176,6 +182,7 @@ static void printInput(lorads_params params){
     printf("reoptLevel = %d\n", params.reoptLevel);
     printf("dyrankLevel = %d\n", params.dyrankLevel);
     printf("highAccMode = %d\n", params.highAccMode);
+    printf("oracleRankMethod = %d\n", params.oracleRankMethod);
 #endif
 #ifdef MAC_INT64
     printf("fname = %s\n", params.fname);
@@ -186,6 +193,7 @@ static void printInput(lorads_params params){
     printf("maxALMIter = %lld\n", params.maxALMIter);
     printf("maxADMMIter = %lld\n", params.maxADMMIter);
     printf("timesLogRank = %f\n", params.timesLogRank);
+    printf("fixedRank = %lld\n", params.fixedRank);
     printf("rhoFreq = %lld\n", params.rhoFreq);
     printf("rhoFactor = %f\n", params.rhoFactor);
     printf("ALMRhoFactor = %f\n", params.ALMRhoFactor);
@@ -200,6 +208,7 @@ static void printInput(lorads_params params){
     printf("reoptLevel = %lld\n", params.reoptLevel);
     printf("dyrankLevel = %lld\n", params.dyrankLevel);
     printf("highAccMode = %d\n", params.highAccMode);
+    printf("oracleRankMethod = %d\n", params.oracleRankMethod);
 #endif
 #ifdef UNIX_INT64
     printf("fname = %s\n", params.fname);
@@ -210,6 +219,7 @@ static void printInput(lorads_params params){
     printf("maxALMIter = %ld\n", params.maxALMIter);
     printf("maxADMMIter = %ld\n", params.maxADMMIter);
     printf("timesLogRank = %f\n", params.timesLogRank);
+    printf("fixedRank = %ld\n", params.fixedRank);
     printf("rhoFreq = %ld\n", params.rhoFreq);
     printf("rhoFactor = %f\n", params.rhoFactor);
     printf("ALMRhoFactor = %f\n", params.ALMRhoFactor);
@@ -224,6 +234,7 @@ static void printInput(lorads_params params){
     printf("reoptLevel = %ld\n", params.reoptLevel);
     printf("dyrankLevel = %ld\n", params.dyrankLevel);
     printf("highAccMode = %d\n", params.highAccMode);
+    printf("oracleRankMethod = %d\n", params.oracleRankMethod);
 #endif
     printf("----------------------------------------------\n");
 }
@@ -258,6 +269,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 1006:
                 params.timesLogRank = atof(optarg);
+                break;
+            case 1022:
+                params.fixedRank = atoi(optarg);
                 break;
             case 1007:
                 params.rhoFreq = atoi(optarg);
@@ -300,6 +314,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 1020:
                 params.highAccMode = atoi(optarg);
+                break;
+            case 1021:
+                params.oracleRankMethod = LORADS_ORACLE_RANK_NAIVE;
                 break;
         }
     }
@@ -359,7 +376,7 @@ int main(int argc, char *argv[]) {
                        LpMatBeg, LpMatIdx, LpMatElem);
     LORADSPreprocess(ASolver, BlkDims);
 
-    LORADSDetermineRank(ASolver, BlkDims, params.timesLogRank);
+    LORADSDetermineRank(ASolver, BlkDims, params.timesLogRank, params.fixedRank);
 //    detectSparsitySDPCoeff(ASolver);
 
     // ALM allocate
@@ -373,6 +390,7 @@ int main(int argc, char *argv[]) {
     lorads_alm_state alm_state_pointer;
     lorads_admm_state admm_state_pointer;
     initial_solver_state(&params, ASolver, &alm_state_pointer, &admm_state_pointer, &sdpConst);
+    lorads_logging_init(ASolver, &params, timeSolveStart);
 //    printfProbInfo(ASolver);
     double reopt_param = 5;
     lorads_int reopt_alm_iter = 3;
@@ -557,6 +575,7 @@ int main(int argc, char *argv[]) {
             ASolver->AStatus = LORADS_MAXITER;
         }
     END_SOLVING:
+        lorads_logging_close(ASolver);
         LORADSEndProgram(ASolver);
     double all_time_end = LUtilGetTimeStamp();
     all_time = all_time_end - all_time_start;

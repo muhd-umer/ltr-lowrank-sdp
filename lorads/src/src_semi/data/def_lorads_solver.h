@@ -9,12 +9,27 @@
 #define DEF_LORADS_SOLVER
 
 #include <stdbool.h>
+#include <stdio.h>
+#include <limits.h>
 #include "def_lorads_lp_conic.h"
 #include "def_lorads_sdp_conic.h"
 #include "def_lorads_elements.h"
 #include "def_lorads_cgs.h"
 #include "def_lorads_lbfgs.h"
 #include "lorads.h"
+
+/**
+ * @brief Logging context for dynamic trajectory capture
+ */
+typedef struct{
+    FILE *trajectory_fp;
+    FILE *log_fp;
+    char problem_name[PATH_MAX];
+    char trajectory_path[PATH_MAX * 2];
+    char log_path[PATH_MAX * 2];
+    double solve_start_time;
+    int naive_fallback_warned;
+} lorads_logging_ctx;
 
 /**
  * @brief Structure containing all variables used in the LORADS solver
@@ -122,6 +137,9 @@ typedef struct{
     lorads_int SDPCoeffSum;
     lorads_status AStatus;
 
+    lorads_oracle_rank_method oracleMethod;
+    double oracleEpsilon;
+    lorads_logging_ctx log_ctx;
     double scaleObjHis;
 } lorads_solver;
 

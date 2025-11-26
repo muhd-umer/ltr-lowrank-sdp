@@ -87,8 +87,9 @@ extern void destroyPreprocess(lorads_solver *ASolver);
  * @param ASolver Pointer to solver instance
  * @param blkDims Array of block dimensions
  * @param timesRank Factor for rank estimation
+  * @param fixedRank Fixed rank override for all cones (-1 disables)
  */
-extern void LORADSDetermineRank(lorads_solver *ASolver, lorads_int *blkDims, double timesRank);
+extern void LORADSDetermineRank(lorads_solver *ASolver, lorads_int *blkDims, double timesRank, lorads_int fixedRank);
 
 /**
  * @brief Detect sparsity patterns in SDP coefficients
