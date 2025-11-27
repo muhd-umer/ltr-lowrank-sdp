@@ -5,9 +5,9 @@ hallar/py/plots
 misc/
 .vscode/
 benchmarks/*.dat-s
-dataset/inst/
-dataset/gen/
-dataset/logs/
+dataset/**/*.csv
+dataset/**/*.log
+dataset/**/*.dat-s
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
