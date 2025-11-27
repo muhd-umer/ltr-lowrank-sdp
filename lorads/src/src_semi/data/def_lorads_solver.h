@@ -25,10 +25,23 @@ typedef struct{
     FILE *trajectory_fp;
     FILE *log_fp;
     char problem_name[PATH_MAX];
+    char input_file_path[PATH_MAX];
     char trajectory_path[PATH_MAX * 2];
     char log_path[PATH_MAX * 2];
+    char json_path[PATH_MAX * 2];
     double solve_start_time;
     int naive_fallback_warned;
+
+    /* Trajectory storage for JSON output */
+    lorads_int *phase1_curr_rank;
+    lorads_int *phase1_oracle_rank;
+    lorads_int phase1_count;
+    lorads_int phase1_capacity;
+
+    lorads_int *phase2_curr_rank;
+    lorads_int *phase2_oracle_rank;
+    lorads_int phase2_count;
+    lorads_int phase2_capacity;
 } lorads_logging_ctx;
 
 /**

@@ -46,7 +46,7 @@ static void set_problem_name(const char *fname, char *buffer, size_t buf_len)
     }
 }
 
-static void build_dataset_paths(const char *fname, const char *problem_name, char *traj_path, size_t traj_len, char *log_path, size_t log_len)
+static void build_dataset_paths(const char *fname, const char *problem_name, char *traj_path, size_t traj_len, char *log_path, size_t log_len, char *json_path, size_t json_len)
 {
     char resolved_path[PATH_MAX];
     const char *path_src = fname;
@@ -74,15 +74,16 @@ static void build_dataset_paths(const char *fname, const char *problem_name, cha
     {
         snprintf(dataset_root, sizeof(dataset_root), "dataset");
     }
-    char gen_dir[PATH_MAX];
     char logs_dir[PATH_MAX];
-    snprintf(gen_dir, sizeof(gen_dir), "%s/gen", dataset_root);
+    char sol_json_dir[PATH_MAX];
     snprintf(logs_dir, sizeof(logs_dir), "%s/logs", dataset_root);
+    snprintf(sol_json_dir, sizeof(sol_json_dir), "%s/sol_json", dataset_root);
     LUtilEnsureDir(dataset_root);
-    LUtilEnsureDir(gen_dir);
     LUtilEnsureDir(logs_dir);
-    snprintf(traj_path, traj_len, "%s/%s.csv", gen_dir, problem_name);
+    LUtilEnsureDir(sol_json_dir);
+    traj_path[0] = '\0';  // No CSV output
     snprintf(log_path, log_len, "%s/%s.log", logs_dir, problem_name);
+    snprintf(json_path, json_len, "%s/%s.json", sol_json_dir, problem_name);
 }
 
 void lorads_log_printf(lorads_solver *solver, const char *fmt, ...)
@@ -117,11 +118,31 @@ void lorads_logging_init(lorads_solver *solver, const lorads_params *params, dou
     solver->log_ctx.trajectory_fp = NULL;
     solver->log_ctx.log_fp = NULL;
     solver->log_ctx.problem_name[0] = '\0';
+    solver->log_ctx.input_file_path[0] = '\0';
     solver->log_ctx.trajectory_path[0] = '\0';
     solver->log_ctx.log_path[0] = '\0';
+    solver->log_ctx.json_path[0] = '\0';
     solver->log_ctx.naive_fallback_warned = 0;
+
+    /* Store input file path */
+    if (params->fname)
+    {
+        snprintf(solver->log_ctx.input_file_path, sizeof(solver->log_ctx.input_file_path), "%s", params->fname);
+    }
+
+    /* Initialize trajectory arrays */
+    solver->log_ctx.phase1_count = 0;
+    solver->log_ctx.phase1_capacity = 128;
+    LORADS_INIT(solver->log_ctx.phase1_curr_rank, lorads_int, solver->log_ctx.phase1_capacity);
+    LORADS_INIT(solver->log_ctx.phase1_oracle_rank, lorads_int, solver->log_ctx.phase1_capacity);
+
+    solver->log_ctx.phase2_count = 0;
+    solver->log_ctx.phase2_capacity = 128;
+    LORADS_INIT(solver->log_ctx.phase2_curr_rank, lorads_int, solver->log_ctx.phase2_capacity);
+    LORADS_INIT(solver->log_ctx.phase2_oracle_rank, lorads_int, solver->log_ctx.phase2_capacity);
+
     set_problem_name(params->fname, solver->log_ctx.problem_name, sizeof(solver->log_ctx.problem_name));
-    build_dataset_paths(params->fname, solver->log_ctx.problem_name, solver->log_ctx.trajectory_path, sizeof(solver->log_ctx.trajectory_path), solver->log_ctx.log_path, sizeof(solver->log_ctx.log_path));
+    build_dataset_paths(params->fname, solver->log_ctx.problem_name, solver->log_ctx.trajectory_path, sizeof(solver->log_ctx.trajectory_path), solver->log_ctx.log_path, sizeof(solver->log_ctx.log_path), solver->log_ctx.json_path, sizeof(solver->log_ctx.json_path));
     solver->log_ctx.log_fp = fopen(solver->log_ctx.log_path, "w");
     if (solver->log_ctx.log_fp)
     {
@@ -129,12 +150,8 @@ void lorads_logging_init(lorads_solver *solver, const lorads_params *params, dou
         fprintf(solver->log_ctx.log_fp, "oracle_method:%d epsilon:%g\n", solver->oracleMethod, solver->oracleEpsilon);
         fflush(solver->log_ctx.log_fp);
     }
-    solver->log_ctx.trajectory_fp = fopen(solver->log_ctx.trajectory_path, "w");
-    if (solver->log_ctx.trajectory_fp)
-    {
-        fprintf(solver->log_ctx.trajectory_fp, "phase,iter,elapsed_sec,primal_obj,dual_obj,constr_violation_l1,constr_violation_inf,primal_dual_gap,current_rank,oracle_rank,cg_iter\n");
-        fflush(solver->log_ctx.trajectory_fp);
-    }
+    /* Do not create CSV trajectory file */
+    solver->log_ctx.trajectory_fp = NULL;
 }
 
 void lorads_logging_close(lorads_solver *solver)
@@ -153,6 +170,12 @@ void lorads_logging_close(lorads_solver *solver)
         fclose(solver->log_ctx.log_fp);
         solver->log_ctx.log_fp = NULL;
     }
+
+    /* Free trajectory arrays */
+    LORADS_FREE(solver->log_ctx.phase1_curr_rank);
+    LORADS_FREE(solver->log_ctx.phase1_oracle_rank);
+    LORADS_FREE(solver->log_ctx.phase2_curr_rank);
+    LORADS_FREE(solver->log_ctx.phase2_oracle_rank);
 }
 
 lorads_int lorads_sum_rank(const lorads_solver *solver)
@@ -503,10 +526,163 @@ lorads_int lorads_compute_oracle_rank(lorads_solver *solver, int phase)
 
 void lorads_append_trajectory(lorads_solver *solver, int phase, lorads_int iter, double elapsed, double primal_obj, double dual_obj, double constr_l1, double constr_inf, double pd_gap, lorads_int current_rank, lorads_int oracle_rank, lorads_int cg_iter)
 {
-    if (!solver || !solver->log_ctx.trajectory_fp)
+    if (!solver)
     {
         return;
     }
-    fprintf(solver->log_ctx.trajectory_fp, "%d,%lld,%.10e,%.10e,%.10e,%.10e,%.10e,%.10e,%lld,%lld,%lld\n", phase, (long long)iter, elapsed, primal_obj, dual_obj, constr_l1, constr_inf, pd_gap, (long long)current_rank, (long long)oracle_rank, (long long)cg_iter);
-    fflush(solver->log_ctx.trajectory_fp);
+
+    /* Write to CSV file */
+    if (solver->log_ctx.trajectory_fp)
+    {
+        fprintf(solver->log_ctx.trajectory_fp, "%d,%lld,%.10e,%.10e,%.10e,%.10e,%.10e,%.10e,%lld,%lld,%lld\n", phase, (long long)iter, elapsed, primal_obj, dual_obj, constr_l1, constr_inf, pd_gap, (long long)current_rank, (long long)oracle_rank, (long long)cg_iter);
+        fflush(solver->log_ctx.trajectory_fp);
+    }
+
+    /* Store in arrays for JSON output */
+    if (phase == 1)
+    {
+        /* Resize if needed */
+        if (solver->log_ctx.phase1_count >= solver->log_ctx.phase1_capacity)
+        {
+            lorads_int new_capacity = solver->log_ctx.phase1_capacity * 2;
+            lorads_int *new_curr_rank;
+            lorads_int *new_oracle_rank;
+            LORADS_INIT(new_curr_rank, lorads_int, new_capacity);
+            LORADS_INIT(new_oracle_rank, lorads_int, new_capacity);
+            if (new_curr_rank && new_oracle_rank)
+            {
+                LORADS_MEMCPY(new_curr_rank, solver->log_ctx.phase1_curr_rank, lorads_int, solver->log_ctx.phase1_count);
+                LORADS_MEMCPY(new_oracle_rank, solver->log_ctx.phase1_oracle_rank, lorads_int, solver->log_ctx.phase1_count);
+                LORADS_FREE(solver->log_ctx.phase1_curr_rank);
+                LORADS_FREE(solver->log_ctx.phase1_oracle_rank);
+                solver->log_ctx.phase1_curr_rank = new_curr_rank;
+                solver->log_ctx.phase1_oracle_rank = new_oracle_rank;
+                solver->log_ctx.phase1_capacity = new_capacity;
+            }
+        }
+        if (solver->log_ctx.phase1_count < solver->log_ctx.phase1_capacity)
+        {
+            solver->log_ctx.phase1_curr_rank[solver->log_ctx.phase1_count] = current_rank;
+            solver->log_ctx.phase1_oracle_rank[solver->log_ctx.phase1_count] = oracle_rank;
+            solver->log_ctx.phase1_count++;
+        }
+    }
+    else if (phase == 2)
+    {
+        /* Resize if needed */
+        if (solver->log_ctx.phase2_count >= solver->log_ctx.phase2_capacity)
+        {
+            lorads_int new_capacity = solver->log_ctx.phase2_capacity * 2;
+            lorads_int *new_curr_rank;
+            lorads_int *new_oracle_rank;
+            LORADS_INIT(new_curr_rank, lorads_int, new_capacity);
+            LORADS_INIT(new_oracle_rank, lorads_int, new_capacity);
+            if (new_curr_rank && new_oracle_rank)
+            {
+                LORADS_MEMCPY(new_curr_rank, solver->log_ctx.phase2_curr_rank, lorads_int, solver->log_ctx.phase2_count);
+                LORADS_MEMCPY(new_oracle_rank, solver->log_ctx.phase2_oracle_rank, lorads_int, solver->log_ctx.phase2_count);
+                LORADS_FREE(solver->log_ctx.phase2_curr_rank);
+                LORADS_FREE(solver->log_ctx.phase2_oracle_rank);
+                solver->log_ctx.phase2_curr_rank = new_curr_rank;
+                solver->log_ctx.phase2_oracle_rank = new_oracle_rank;
+                solver->log_ctx.phase2_capacity = new_capacity;
+            }
+        }
+        if (solver->log_ctx.phase2_count < solver->log_ctx.phase2_capacity)
+        {
+            solver->log_ctx.phase2_curr_rank[solver->log_ctx.phase2_count] = current_rank;
+            solver->log_ctx.phase2_oracle_rank[solver->log_ctx.phase2_count] = oracle_rank;
+            solver->log_ctx.phase2_count++;
+        }
+    }
+}
+
+void lorads_write_json_output(lorads_solver *solver, lorads_int final_oracle_rank, double primal_obj, double dual_obj, double constr_l1, double constr_inf, double pd_gap, double solve_time, double rho_max, double heuristic_factor)
+{
+    if (!solver)
+    {
+        return;
+    }
+
+    FILE *json_fp = fopen(solver->log_ctx.json_path, "w");
+    if (!json_fp)
+    {
+        lorads_log_printf(solver, "Warning: Could not open JSON file for writing: %s\n", solver->log_ctx.json_path);
+        return;
+    }
+
+    /* Write JSON header */
+    fprintf(json_fp, "{\n");
+    fprintf(json_fp, "  \"problem_id\": \"%s\",\n", solver->log_ctx.problem_name);
+    fprintf(json_fp, "  \"file_path\": \"%s\",\n", solver->log_ctx.input_file_path);
+
+    /* Write final metrics */
+    fprintf(json_fp, "  \"metrics\": {\n");
+    fprintf(json_fp, "    \"oracle_rank\": %lld,\n", (long long)final_oracle_rank);
+    fprintf(json_fp, "    \"primal_obj\": %.16e,\n", primal_obj);
+    fprintf(json_fp, "    \"dual_obj\": %.16e,\n", dual_obj);
+    fprintf(json_fp, "    \"constr_violation_l1\": %.16e,\n", constr_l1);
+    fprintf(json_fp, "    \"constr_violation_inf\": %.16e,\n", constr_inf);
+    fprintf(json_fp, "    \"primal_dual_gap\": %.16e,\n", pd_gap);
+    fprintf(json_fp, "    \"solve_time_sec\": %.16e,\n", solve_time);
+    fprintf(json_fp, "    \"rho_max\": %.16e,\n", rho_max);
+    fprintf(json_fp, "    \"heuristic_factor\": %.16e\n", heuristic_factor);
+    fprintf(json_fp, "  },\n");
+
+    /* Write trajectory */
+    fprintf(json_fp, "  \"trajectory\": {\n");
+
+    /* Phase 1 trajectory */
+    fprintf(json_fp, "    \"phase_1\": {\n");
+    fprintf(json_fp, "      \"curr_rank\": [");
+    for (lorads_int i = 0; i < solver->log_ctx.phase1_count; i++)
+    {
+        if (i > 0)
+        {
+            fprintf(json_fp, ", ");
+        }
+        fprintf(json_fp, "%lld", (long long)solver->log_ctx.phase1_curr_rank[i]);
+    }
+    fprintf(json_fp, "],\n");
+    fprintf(json_fp, "      \"oracle_rank\": [");
+    for (lorads_int i = 0; i < solver->log_ctx.phase1_count; i++)
+    {
+        if (i > 0)
+        {
+            fprintf(json_fp, ", ");
+        }
+        fprintf(json_fp, "%lld", (long long)solver->log_ctx.phase1_oracle_rank[i]);
+    }
+    fprintf(json_fp, "]\n");
+    fprintf(json_fp, "    },\n");
+
+    /* Phase 2 trajectory */
+    fprintf(json_fp, "    \"phase_2\": {\n");
+    fprintf(json_fp, "      \"curr_rank\": [");
+    for (lorads_int i = 0; i < solver->log_ctx.phase2_count; i++)
+    {
+        if (i > 0)
+        {
+            fprintf(json_fp, ", ");
+        }
+        fprintf(json_fp, "%lld", (long long)solver->log_ctx.phase2_curr_rank[i]);
+    }
+    fprintf(json_fp, "],\n");
+    fprintf(json_fp, "      \"oracle_rank\": [");
+    for (lorads_int i = 0; i < solver->log_ctx.phase2_count; i++)
+    {
+        if (i > 0)
+        {
+            fprintf(json_fp, ", ");
+        }
+        fprintf(json_fp, "%lld", (long long)solver->log_ctx.phase2_oracle_rank[i]);
+    }
+    fprintf(json_fp, "]\n");
+    fprintf(json_fp, "    }\n");
+
+    fprintf(json_fp, "  }\n");
+    fprintf(json_fp, "}\n");
+
+    fclose(json_fp);
+    lorads_log_printf(solver, "JSON output written to: %s\n", solver->log_ctx.json_path);
 }

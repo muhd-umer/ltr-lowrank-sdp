@@ -575,6 +575,14 @@ int main(int argc, char *argv[]) {
             ASolver->AStatus = LORADS_MAXITER;
         }
     END_SOLVING:
+        /* Compute final oracle rank and write JSON output */
+        lorads_int final_oracle_rank = lorads_compute_oracle_rank(ASolver, 2);
+        if (final_oracle_rank < 0)
+        {
+            final_oracle_rank = 0;
+        }
+        lorads_write_json_output(ASolver, final_oracle_rank, admm_state_pointer.primal_objective_value, admm_state_pointer.dual_objective_value, admm_state_pointer.l_1_primal_infeasibility, admm_state_pointer.l_inf_primal_infeasibility, admm_state_pointer.primal_dual_gap, all_time, params.rhoMax, params.heuristicFactor);
+
         lorads_logging_close(ASolver);
         LORADSEndProgram(ASolver);
     double all_time_end = LUtilGetTimeStamp();
