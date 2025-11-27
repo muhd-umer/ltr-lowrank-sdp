@@ -4,10 +4,14 @@ hallar/py/plots
 .DS_Store
 misc/
 .vscode/
+
 benchmarks/*.dat-s
 dataset/**/*.csv
 dataset/**/*.log
 dataset/**/*.dat-s
+
+dataset/logs/
+dataset/sol_json/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

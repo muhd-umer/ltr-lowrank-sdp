@@ -2,7 +2,7 @@
 
 LORADS_EXECUTABLE="./lorads/src/build/LoRADS_v_2_0_1-alpha"
 DATA_DIR="./dataset/instances/"
-TIMEOUT_DURATION=900
+TIMEOUT_DURATION=300
 LOG_DIR="./dataset/logs/"
 JSON_DIR="./dataset/sol_json/"
 
@@ -73,7 +73,7 @@ get_lorads_params() {
         heuristic_factor="10.0"
     fi
 
-    echo "--phase1Tol $phase1_tol --heuristicFactor $heuristic_factor --timesLogRank $times_log_rank --rhoMax $rho_max --timeSecLimit $TIMEOUT_DURATION"
+    echo "--phase1Tol $phase1_tol --heuristicFactor $heuristic_factor --timesLogRank $times_log_rank --rhoMax $rho_max --timeSecLimit $TIMEOUT_DURATION --reoptLevel 0"
 }
 
 echo "Running LoRADS on all problem instances in $DATA_DIR"
