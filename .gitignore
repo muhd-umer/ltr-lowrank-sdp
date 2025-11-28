@@ -9,6 +9,7 @@ benchmarks/*.dat-s
 dataset/**/*.csv
 dataset/**/*.log
 dataset/**/*.dat-s
+dataset/proc/
 
 dataset/logs/
 dataset/sol_json/
