@@ -130,6 +130,8 @@ extern int MAX_ALM_SUB_ITER;
  */
 typedef struct{
     char *fname;                ///< Input file name
+    char *logFile;              ///< Optional log file path (NULL to disable)
+    char *jsonFile;             ///< Optional JSON output file path (NULL to disable)
     double initRho;             ///< Initial penalty parameter
     double rhoMax;              ///< Maximum penalty parameter
     double rhoCellingALM;       ///< ALM penalty parameter ceiling

@@ -7,7 +7,7 @@ LOG_DIR="./dataset/logs/"
 JSON_DIR="./dataset/sol_json/"
 
 cleanup() {
-    echo -e "\nScript interrupted. Exiting gracefully."
+    echo -e "\nscript interrupted. exiting..."
     exit 1
 }
 
@@ -95,7 +95,10 @@ for subfolder in "$DATA_DIR"*/; do
                 echo "[$total] processing: $problem_name"
                 echo "    parameters: $params"
 
-                "$LORADS_EXECUTABLE" "$file" $params > /dev/null 2>&1
+                log_file="${LOG_DIR}${problem_name}.log"
+                json_file="${JSON_DIR}${problem_name}.json"
+
+                "$LORADS_EXECUTABLE" "$file" --logfile "$log_file" --jsonfile "$json_file" $params > /dev/null 2>&1
                 exit_code=$?
 
                 if [ $exit_code -eq 0 ]; then

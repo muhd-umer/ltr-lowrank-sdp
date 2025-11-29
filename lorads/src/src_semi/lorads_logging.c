@@ -142,13 +142,31 @@ void lorads_logging_init(lorads_solver *solver, const lorads_params *params, dou
     LORADS_INIT(solver->log_ctx.phase2_oracle_rank, lorads_int, solver->log_ctx.phase2_capacity);
 
     set_problem_name(params->fname, solver->log_ctx.problem_name, sizeof(solver->log_ctx.problem_name));
-    build_dataset_paths(params->fname, solver->log_ctx.problem_name, solver->log_ctx.trajectory_path, sizeof(solver->log_ctx.trajectory_path), solver->log_ctx.log_path, sizeof(solver->log_ctx.log_path), solver->log_ctx.json_path, sizeof(solver->log_ctx.json_path));
-    solver->log_ctx.log_fp = fopen(solver->log_ctx.log_path, "w");
-    if (solver->log_ctx.log_fp)
+
+    /* Only build dataset paths and open files if logFile or jsonFile are specified */
+    if (params->logFile || params->jsonFile)
     {
-        fprintf(solver->log_ctx.log_fp, "problem:%s\n", solver->log_ctx.problem_name);
-        fprintf(solver->log_ctx.log_fp, "oracle_method:%d epsilon:%g\n", solver->oracleMethod, solver->oracleEpsilon);
-        fflush(solver->log_ctx.log_fp);
+        /* If specific paths are provided, use them directly */
+        if (params->logFile)
+        {
+            snprintf(solver->log_ctx.log_path, sizeof(solver->log_ctx.log_path), "%s", params->logFile);
+        }
+        if (params->jsonFile)
+        {
+            snprintf(solver->log_ctx.json_path, sizeof(solver->log_ctx.json_path), "%s", params->jsonFile);
+        }
+    }
+
+    /* Open log file only if log path is set */
+    if (solver->log_ctx.log_path[0] != '\0')
+    {
+        solver->log_ctx.log_fp = fopen(solver->log_ctx.log_path, "w");
+        if (solver->log_ctx.log_fp)
+        {
+            fprintf(solver->log_ctx.log_fp, "problem:%s\n", solver->log_ctx.problem_name);
+            fprintf(solver->log_ctx.log_fp, "oracle_method:%d epsilon:%g\n", solver->oracleMethod, solver->oracleEpsilon);
+            fflush(solver->log_ctx.log_fp);
+        }
     }
     /* Do not create CSV trajectory file */
     solver->log_ctx.trajectory_fp = NULL;
@@ -600,6 +618,12 @@ void lorads_append_trajectory(lorads_solver *solver, int phase, lorads_int iter,
 void lorads_write_json_output(lorads_solver *solver, lorads_int final_oracle_rank, double primal_obj, double dual_obj, double constr_l1, double constr_inf, double pd_gap, double solve_time, double rho_max, double heuristic_factor)
 {
     if (!solver)
+    {
+        return;
+    }
+
+    /* Only write JSON output if a path is specified */
+    if (solver->log_ctx.json_path[0] == '\0')
     {
         return;
     }

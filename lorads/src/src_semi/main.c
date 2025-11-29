@@ -56,6 +56,8 @@
 void initCommandLineArgs(lorads_params *params)
 {
     params->fname = "NULL";                    ///< Input file name
+    params->logFile = NULL;                   ///< Optional log file path (NULL to disable)
+    params->jsonFile = NULL;                  ///< Optional JSON output file path (NULL to disable)
     params->initRho = 0.0;                     ///< Initial penalty parameter
     params->rhoMax = 5000.0;                   ///< Maximum penalty parameter
     params->rhoCellingALM = 1e+8;             ///< Upper bound for ALM penalty parameter
@@ -121,6 +123,8 @@ static void print_summary_info(lorads_int nConstrs, lorads_int nBlks, lorads_int
  * - Algorithm behavior and accuracy settings
  */
 static struct option long_options[] = {
+        {"logfile", required_argument, 0, 1025},           ///< Optional log file path
+        {"jsonfile", required_argument, 0, 1026},          ///< Optional JSON output file path
         {"initRho", required_argument, 0, 1000},           ///< Initial penalty parameter for ALM/ADMM
         {"rhoMax", required_argument, 0, 1001},            ///< Maximum allowed penalty parameter
         {"rhoCellingALM", required_argument, 0, 1002},     ///< Upper bound for ALM penalty parameter
@@ -259,6 +263,12 @@ int main(int argc, char *argv[]) {
 
     while ((opt = getopt_long(argc, argv, "r:", long_options, &long_index)) != -1){
         switch(opt){
+            case 1025:
+                params.logFile = optarg;
+                break;
+            case 1026:
+                params.jsonFile = optarg;
+                break;
             case 1000:
                 params.initRho = atof(optarg);
                 break;
