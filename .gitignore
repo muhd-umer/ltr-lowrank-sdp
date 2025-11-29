@@ -5,7 +5,7 @@ hallar/py/plots
 misc/
 .vscode/
 
-benchmarks/*.dat-s
+benchmarks/
 dataset/**/*.csv
 dataset/**/*.log
 dataset/**/*.dat-s
