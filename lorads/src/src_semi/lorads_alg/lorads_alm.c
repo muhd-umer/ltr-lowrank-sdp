@@ -983,7 +983,7 @@ extern lorads_int LORADS_ALMOptimize_reopt(lorads_params *params, lorads_solver 
     lorads_int localIter = 0;
     lorads_int clearLBFGS = 0;
     lorads_int rank_flag = 0;
-    double rank_update_factor = 1.5;
+    double rank_update_factor = params->rankUpdateFactor;
     lorads_int k = alm_iter_state->outerIter;
     lorads_int k0 = alm_iter_state->outerIter;
     lorads_int rho_factor_flag = 0;
@@ -1245,7 +1245,7 @@ extern lorads_int LORADS_ALMOptimize(lorads_params *params, lorads_solver *ASolv
     lorads_int localIter = 0;
     lorads_int clearLBFGS = 0;
     lorads_int rank_flag = 0;
-    double rank_update_factor = 1.5;
+    double rank_update_factor = params->rankUpdateFactor;
     rho_update_factor = params->ALMRhoFactor;
     lorads_int rho_factor_flag = 0;
     double rank_flag_thres;

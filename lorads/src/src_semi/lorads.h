@@ -138,9 +138,11 @@ typedef struct{
     lorads_int maxADMMIter;     ///< Maximum ADMM iterations
     double timesLogRank;        ///< Factor for rank estimation
     lorads_int fixedRank;       ///< Fixed rank override for all cones (-1 to disable)
+    lorads_int initRank;        ///< Initial rank for dynamic rank adjustment (-1 to disable)
     lorads_int rhoFreq;         ///< Frequency of penalty updates
     double rhoFactor;           ///< Penalty increase factor
     double ALMRhoFactor;        ///< ALM penalty increase factor
+    double rankUpdateFactor;    ///< Factor for increasing rank during dynamic adjustment
     double phase1Tol;           ///< Phase 1 convergence tolerance
     double phase2Tol;           ///< Phase 2 convergence tolerance
     double timeSecLimit;        ///< Time limit in seconds

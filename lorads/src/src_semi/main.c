@@ -64,9 +64,11 @@ void initCommandLineArgs(lorads_params *params)
     params->maxADMMIter = 10000;              ///< Maximum ADMM iterations
     params->timesLogRank = 2.0;               ///< Factor for rank estimation
     params->fixedRank = -1;                   ///< Fixed rank override (-1 disables)
+    params->initRank = -1;                    ///< Initial rank for dynamic adjustment (-1 disables)
     params->rhoFreq = 5;                      ///< Frequency of penalty parameter updates
     params->rhoFactor = 1.2;                  ///< Factor for increasing penalty parameter
     params->ALMRhoFactor = 2.0;               ///< Factor for increasing ALM penalty parameter
+    params->rankUpdateFactor = 1.5;           ///< Factor for increasing rank during dynamic adjustment
     params->phase1Tol = 1e-3;                 ///< Tolerance for phase 1 (coarse optimization)
     params->phase2Tol = 1e-5;                 ///< Tolerance for phase 2 (fine optimization)
     params->timeSecLimit = 3600.0;            ///< Time limit in seconds
@@ -127,9 +129,11 @@ static struct option long_options[] = {
         {"maxADMMIter", required_argument, 0, 1005},       ///< Maximum number of ADMM iterations
         {"timesLogRank", required_argument, 0, 1006},      ///< Factor for rank estimation (initial rank = log(n) * timesLogRank)
         {"fixedRank", required_argument, 0, 1022},         ///< Fixed rank override for all cones
+        {"initRank", required_argument, 0, 1023},          ///< Initial rank for dynamic adjustment
         {"rhoFreq", required_argument, 0, 1007},           ///< Frequency of penalty parameter updates
         {"rhoFactor", required_argument, 0, 1008},         ///< Factor for increasing penalty parameter
         {"ALMRhoFactor", required_argument, 0, 1009},      ///< Factor for increasing ALM penalty parameter
+        {"rankUpdateFactor", required_argument, 0, 1024},  ///< Factor for increasing rank during dynamic adjustment
         {"phase1Tol", required_argument, 0, 1010},         ///< Convergence tolerance for phase 1 (coarse optimization)
         {"phase2Tol", required_argument, 0, 1011},         ///< Convergence tolerance for phase 2 (fine optimization)
         {"timeSecLimit", required_argument, 0, 1012},      ///< Maximum runtime in seconds
@@ -168,9 +172,11 @@ static void printInput(lorads_params params){
     printf("maxADMMIter = %d\n", params.maxADMMIter);
     printf("timesLogRank = %f\n", params.timesLogRank);
     printf("fixedRank = %d\n", params.fixedRank);
+    printf("initRank = %d\n", params.initRank);
     printf("rhoFreq = %d\n", params.rhoFreq);
     printf("rhoFactor = %f\n", params.rhoFactor);
     printf("ALMRhoFactor = %f\n", params.ALMRhoFactor);
+    printf("rankUpdateFactor = %f\n", params.rankUpdateFactor);
     printf("phase1Tol = %f\n", params.phase1Tol);
     printf("phase2Tol = %f\n", params.phase2Tol);
     printf("timeSecLimit = %f\n", params.timeSecLimit);
@@ -194,9 +200,11 @@ static void printInput(lorads_params params){
     printf("maxADMMIter = %lld\n", params.maxADMMIter);
     printf("timesLogRank = %f\n", params.timesLogRank);
     printf("fixedRank = %lld\n", params.fixedRank);
+    printf("initRank = %lld\n", params.initRank);
     printf("rhoFreq = %lld\n", params.rhoFreq);
     printf("rhoFactor = %f\n", params.rhoFactor);
     printf("ALMRhoFactor = %f\n", params.ALMRhoFactor);
+    printf("rankUpdateFactor = %f\n", params.rankUpdateFactor);
     printf("phase1Tol = %f\n", params.phase1Tol);
     printf("phase2Tol = %f\n", params.phase2Tol);
     printf("timeSecLimit = %f\n", params.timeSecLimit);
@@ -220,9 +228,11 @@ static void printInput(lorads_params params){
     printf("maxADMMIter = %ld\n", params.maxADMMIter);
     printf("timesLogRank = %f\n", params.timesLogRank);
     printf("fixedRank = %ld\n", params.fixedRank);
+    printf("initRank = %ld\n", params.initRank);
     printf("rhoFreq = %ld\n", params.rhoFreq);
     printf("rhoFactor = %f\n", params.rhoFactor);
     printf("ALMRhoFactor = %f\n", params.ALMRhoFactor);
+    printf("rankUpdateFactor = %f\n", params.rankUpdateFactor);
     printf("phase1Tol = %f\n", params.phase1Tol);
     printf("phase2Tol = %f\n", params.phase2Tol);
     printf("timeSecLimit = %f\n", params.timeSecLimit);
@@ -273,6 +283,9 @@ int main(int argc, char *argv[]) {
             case 1022:
                 params.fixedRank = atoi(optarg);
                 break;
+            case 1023:
+                params.initRank = atoi(optarg);
+                break;
             case 1007:
                 params.rhoFreq = atoi(optarg);
                 break;
@@ -281,6 +294,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 1009:
                 params.ALMRhoFactor = atof(optarg);
+                break;
+            case 1024:
+                params.rankUpdateFactor = atof(optarg);
                 break;
             case 1010:
                 params.phase1Tol = atof(optarg);
@@ -376,7 +392,7 @@ int main(int argc, char *argv[]) {
                        LpMatBeg, LpMatIdx, LpMatElem);
     LORADSPreprocess(ASolver, BlkDims);
 
-    LORADSDetermineRank(ASolver, BlkDims, params.timesLogRank, params.fixedRank);
+    LORADSDetermineRank(ASolver, BlkDims, params.timesLogRank, params.fixedRank, params.initRank);
 //    detectSparsitySDPCoeff(ASolver);
 
     // ALM allocate

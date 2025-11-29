@@ -403,7 +403,7 @@ extern void destroyPreprocess(lorads_solver *ASolver)
  * - Uses heuristics to determine rank based on sparsity and cone size
  * - Updates solver's rank_max array with the calculated values
  */
-extern void LORADSDetermineRank(lorads_solver *ASolver, lorads_int *blkDims, double timesRank, lorads_int fixedRank)
+extern void LORADSDetermineRank(lorads_solver *ASolver, lorads_int *blkDims, double timesRank, lorads_int fixedRank, lorads_int initRank)
 {
     lorads_int nCones = ASolver->nCones;
     lorads_int *rankElem;
@@ -412,31 +412,48 @@ extern void LORADSDetermineRank(lorads_solver *ASolver, lorads_int *blkDims, dou
     LORADS_INIT(ASolver->rank_max, lorads_int, nCones);
     LORADS_MEMCHECK(ASolver->rank_max);
     int use_fixed_rank = (fixedRank > 0);
+    int use_init_rank = (initRank > 0);
     for  (lorads_int iCone = 0; iCone < nCones; ++iCone)
     {
+        lorads_sdp_cone *ACone = ASolver->SDPCones[iCone];
+        lorads_int nnzRows = 0;
+        ACone->nnzStat(ACone->coneData, &nnzRows);
+
+        // Calculate rank_max (maximum allowed rank)
+        lorads_int calculated_max_rank = LORADS_MIN( (lorads_int)sqrt(2 * nnzRows) + 1, blkDims[iCone]);
+
         if (use_fixed_rank){
+            // Fixed rank: both initial and max are set to fixedRank (truly fixed)
             lorads_int capped_rank = LORADS_MIN(fixedRank, blkDims[iCone]);
             rankElem[iCone] = LORADS_MAX(1, capped_rank);
             ASolver->rank_max[iCone] = rankElem[iCone];
             continue;
         }
-        lorads_sdp_cone *ACone = ASolver->SDPCones[iCone];
-        lorads_int nnzRows = 0;
-        ACone->nnzStat(ACone->coneData, &nnzRows);
-        if (timesRank <= 1e-6)
-        {
-            rankElem[iCone] = LORADS_MIN( (lorads_int)sqrt(2 * nnzRows) + 1, blkDims[iCone]);
-        }
-        else if (nnzRows / blkDims[iCone] >= 20 && blkDims[iCone] <= 400 && nCones <= 3){
-            rankElem[iCone] = LORADS_MIN( (lorads_int)sqrt(2 * nnzRows) + 1, blkDims[iCone]);
-        }
-        else
-        {
-            rankElem[iCone] = LORADS_MIN(ceil(timesRank * log(blkDims[iCone])), LORADS_MIN( (lorads_int)sqrt(2 * nnzRows) + 1, blkDims[iCone]));
-        }
-        rankElem[iCone] = LORADS_MAX(1, rankElem[iCone]);
 
-        ASolver->rank_max[iCone] = LORADS_MIN( (lorads_int)sqrt(2 * nnzRows) + 1, blkDims[iCone]);
+        // Set rank_max for dynamic adjustment
+        ASolver->rank_max[iCone] = calculated_max_rank;
+
+        // Determine initial rank
+        if (use_init_rank){
+            // Use initRank as starting point, but allow dynamic adjustment
+            lorads_int capped_init_rank = LORADS_MIN(initRank, blkDims[iCone]);
+            rankElem[iCone] = LORADS_MAX(1, capped_init_rank);
+        }
+        else{
+            // Use heuristics to determine initial rank
+            if (timesRank <= 1e-6)
+            {
+                rankElem[iCone] = LORADS_MIN( (lorads_int)sqrt(2 * nnzRows) + 1, blkDims[iCone]);
+            }
+            else if (nnzRows / blkDims[iCone] >= 20 && blkDims[iCone] <= 400 && nCones <= 3){
+                rankElem[iCone] = LORADS_MIN( (lorads_int)sqrt(2 * nnzRows) + 1, blkDims[iCone]);
+            }
+            else
+            {
+                rankElem[iCone] = LORADS_MIN(ceil(timesRank * log(blkDims[iCone])), LORADS_MIN( (lorads_int)sqrt(2 * nnzRows) + 1, blkDims[iCone]));
+            }
+            rankElem[iCone] = LORADS_MAX(1, rankElem[iCone]);
+        }
     }
     ASolver->var->rankElem = rankElem;
 }
