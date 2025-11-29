@@ -80,29 +80,25 @@ class SDPAParser:
             ValueError: If file is empty, invalid, or has dimension mismatch.
         """
         with open(self.filepath, "r") as f:
-            # skip comments and read header
+
             line = self._read_noncomment_line(f)
             if line is None:
-                raise ValueError(f"Empty or invalid SDPA file: {self.filepath}")
+                raise ValueError(f"empty or invalid SDPA file: {self.filepath}")
 
-            # parse header: m, nblocks, block dimensions
             self.m = int(line.strip())
             self.nblocks = int(self._read_noncomment_line(f).strip())
 
             block_line = self._read_noncomment_line(f).strip()
             block_tokens = self._parse_block_dims(block_line)
 
-            # keep only sdp blocks (positive dims), skip lp blocks (negative)
             self.block_dims = [d for d in block_tokens if d > 0]
             self.nblocks = len(self.block_dims)
 
-            # compute block offsets for global indexing
             self.block_offsets = [0]
             for dim in self.block_dims:
                 self.block_offsets.append(self.block_offsets[-1] + dim)
             self.n = self.block_offsets[-1]
 
-            # parse rhs vector
             rhs_line = self._read_noncomment_line(f).strip()
             rhs_tokens = (
                 rhs_line.replace(",", " ").replace("{", " ").replace("}", " ").split()
@@ -114,7 +110,6 @@ class SDPAParser:
                     f"RHS dimension mismatch: got {len(self.b)}, expected {self.m}"
                 )
 
-            # parse matrix entries using coo format for efficiency
             C_rows, C_cols, C_data = [], [], []
             A_coo = [{"rows": [], "cols": [], "data": []} for _ in range(self.m)]
 
@@ -135,7 +130,7 @@ class SDPAParser:
 
                 try:
                     matno = int(parts[0])
-                    blk = int(parts[1]) - 1  # 0-indexed
+                    blk = int(parts[1]) - 1
                     row = int(parts[2]) - 1
                     col = int(parts[3]) - 1
                     value = float(parts[4])
@@ -145,27 +140,26 @@ class SDPAParser:
                 if blk < 0 or blk >= self.nblocks:
                     continue
 
-                # convert to global indices
                 gr = self.block_offsets[blk] + row
                 gc = self.block_offsets[blk] + col
 
                 if matno == 0:
-                    # cost matrix C
+
                     C_rows.append(gr)
                     C_cols.append(gc)
                     C_data.append(value)
-                    if gr != gc:  # symmetrize off-diagonal entries
+                    if gr != gc:
                         C_rows.append(gc)
                         C_cols.append(gr)
                         C_data.append(value)
                 else:
-                    # constraint matrix A_{matno}
+
                     mat_idx = matno - 1
                     if mat_idx < self.m:
                         A_coo[mat_idx]["rows"].append(gr)
                         A_coo[mat_idx]["cols"].append(gc)
                         A_coo[mat_idx]["data"].append(value)
-                        if gr != gc:  # symmetrize
+                        if gr != gc:
                             A_coo[mat_idx]["rows"].append(gc)
                             A_coo[mat_idx]["cols"].append(gr)
                             A_coo[mat_idx]["data"].append(value)
@@ -177,7 +171,6 @@ class SDPAParser:
         if verbose:
             print("    converting to CSR format...")
 
-        # construct sparse matrices
         if C_data:
             self.C = sp.csr_matrix(
                 (C_data, (C_rows, C_cols)), shape=(self.n, self.n), dtype=np.float64
@@ -333,7 +326,7 @@ class ScalableFeatureExtractor:
         for i, A_i in enumerate(self.A):
             self.nnz_counts[i] = A_i.nnz
             if A_i.nnz > 0:
-                # basic matrix statistics
+
                 self.norms[i] = sp.linalg.norm(A_i, "fro")
                 self.traces[i] = A_i.diagonal().sum()
                 diag = A_i.diagonal()
@@ -342,7 +335,6 @@ class ScalableFeatureExtractor:
                     np.abs(A_i.data).max() if A_i.data.size > 0 else 0
                 )
 
-                # spectral scale; largest magnitude eigenvalue
                 try:
                     vals = sp.linalg.eigsh(
                         A_i, k=1, which="LM", return_eigenvectors=False
@@ -434,22 +426,18 @@ class ScalableFeatureExtractor:
         for i in range(self.m):
             norm_i = self.norms[i]
 
-            # scale features (log-transformed)
             log_frob = np.log(1.0 + norm_i)
             log_nnz = np.log(1.0 + self.nnz_counts[i])
 
-            # normalized features (clipped for stability)
             norm_trace = np.clip(self.traces[i] / (norm_i + self.EPS), -100.0, 100.0)
             diag_dom = self.diag_norms[i] / (norm_i + self.EPS)
             norm_rhs = np.clip(self.b[i] / (norm_i + self.EPS), -100.0, 100.0)
 
-            # cost matrix interaction
             if self.row_sets[i] and self.C_row_set:
                 overlap = len(self.row_sets[i] & self.C_row_set) / len(self.row_sets[i])
             else:
                 overlap = 0.0
 
-            # scale and spectral features
             log_max = np.log(1.0 + self.max_abs_vals[i])
             log_spectral = np.log(1.0 + self.spectral_scales[i])
 
@@ -511,7 +499,7 @@ class ScalableFeatureExtractor:
             return np.zeros((2, 0), dtype=np.int64), np.zeros((0, 2), dtype=np.float32)
 
         if verbose:
-            print(f"    Computing edges for m={self.m}...")
+            print(f"    computing edges for m={self.m}...")
 
         edges_dict: Dict[Tuple[int, int], List[float]] = {}
 
@@ -559,7 +547,6 @@ class ScalableFeatureExtractor:
                 if not set_j:
                     continue
 
-                # jaccard similarity of row indices
                 intersection = len(set_i & set_j)
                 if intersection == 0:
                     continue
@@ -594,7 +581,7 @@ class ScalableFeatureExtractor:
             sample_size: Number of candidates to consider per node.
             verbose: If True, print progress information.
         """
-        # group constraints by representative row for efficient lookup
+
         row_to_constraints: Dict[int, List[int]] = {}
         for i, row_set in enumerate(self.row_sets):
             if row_set:
@@ -611,7 +598,6 @@ class ScalableFeatureExtractor:
                 if row in row_to_constraints:
                     candidates.update(row_to_constraints[row])
 
-            # sample additional random candidates if needed
             if len(candidates) < sample_size:
                 remaining = sample_size - len(candidates)
                 others = [x for x in range(self.m) if x != i and x not in candidates]
@@ -622,7 +608,6 @@ class ScalableFeatureExtractor:
                     candidates.update(sampled)
             candidates.discard(i)
 
-            # compute overlap
             neighbors = []
             for j in candidates:
                 set_j = self.row_sets[j]
@@ -648,7 +633,7 @@ class ScalableFeatureExtractor:
 
             if verbose and (i + 1) % 2000 == 0:
                 print(
-                    f"      Sampled edges: {i+1}/{self.m}, edges so far: {len(edges_dict)}"
+                    f"      sampled edges: {i+1}/{self.m}, edges so far: {len(edges_dict)}"
                 )
 
     def _knn_fallback(self, k: int, verbose: bool) -> Tuple[np.ndarray, np.ndarray]:
@@ -676,13 +661,13 @@ class ScalableFeatureExtractor:
 
         for i in range(self.m):
             dists = np.abs(log_norms - log_norms[i])
-            dists[i] = np.inf  # exclude self
+            dists[i] = np.inf
             nearest = np.argpartition(dists, k)[:k]
 
             for j in nearest:
                 key = (min(i, j), max(i, j))
                 if key not in edges_dict:
-                    # similarity = inverse distance
+
                     sim = 1.0 / (1.0 + dists[j])
                     min_nnz = min(self.nnz_counts[i], self.nnz_counts[j])
                     edges_dict[key] = [sim, np.log(1.0 + min_nnz)]
@@ -757,7 +742,6 @@ def process_sdpa_to_pyg(
         verbose=verbose,
     )
 
-    # construct pyg data object
     data = Data(
         x=torch.tensor(node_feats, dtype=torch.float32),
         edge_index=torch.tensor(edge_index, dtype=torch.long),
@@ -766,7 +750,6 @@ def process_sdpa_to_pyg(
         num_nodes=m,
     )
 
-    # save to disk
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     torch.save(data, output_path)
 
