@@ -1,48 +1,144 @@
 """\
-This module contains a PyG Dataset class and utilities
-to create train/val/test loaders for task at hand.
+This module contains a PyG Dataset class and utilities to create
+train/val/test loaders for task at hand.
 """
 
 import json
 import random
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import torch
 from torch_geometric.data import Data, Dataset
 from torch_geometric.loader import DataLoader
 
+from dataset.processor import NUM_GLOBAL_FEATURES, NUM_NODE_FEATURES, NUM_EDGE_FEATURES
+
+
+def extract_rank_schedule(trajectory: Dict) -> List[int]:
+    """Extracts unique oracle rank schedule from solver trajectory.
+
+    Args:
+        trajectory: Dictionary with 'phase_1' and 'phase_2' trajectory data,
+            each containing 'oracle_rank' lists
+
+    Returns:
+        List of unique consecutive oracle rank values representing the
+        rank schedule. Returns empty list if trajectory is malformed
+    """
+    phase1 = trajectory.get("phase_1", {})
+    phase2 = trajectory.get("phase_2", {})
+
+    p1_oracle = phase1.get("oracle_rank", [])
+    p2_oracle = phase2.get("oracle_rank", [])
+
+    all_oracle = p1_oracle + p2_oracle
+
+    if not all_oracle:
+        return []
+
+    schedule = []
+    for rank in all_oracle:
+        if not schedule or schedule[-1] != rank:
+            schedule.append(int(rank))
+
+    return schedule
+
+
+def classify_schedule_type(schedule: List[int]) -> str:
+    """Classifies the type of rank schedule.
+
+    Args:
+        schedule: List of unique consecutive rank values
+
+    Returns:
+        One of: 'constant', 'increasing', 'decreasing', 'mixed'
+    """
+    if len(schedule) <= 1:
+        return "constant"
+
+    diffs = [schedule[i + 1] - schedule[i] for i in range(len(schedule) - 1)]
+
+    if all(d >= 0 for d in diffs):
+        return "increasing"
+    elif all(d <= 0 for d in diffs):
+        return "decreasing"
+    else:
+        return "mixed"
+
+
+def pad_schedule(
+    schedule: List[int],
+    max_length: int,
+    pad_value: int = 0,
+) -> Tuple[List[int], int]:
+    """Pads or truncates schedule to fixed length.
+
+    Args:
+        schedule: Original rank schedule
+        max_length: Target length for padding
+        pad_value: Value to use for padding
+
+    Returns:
+        Tuple of (padded_schedule, original_length)
+    """
+    original_length = len(schedule)
+
+    if len(schedule) >= max_length:
+        return schedule[:max_length], min(original_length, max_length)
+
+    padded = schedule + [pad_value] * (max_length - len(schedule))
+    return padded, original_length
+
 
 class SDPDataset(Dataset):
-    """Custom PyTorch Geometric Dataset for SDP problem instances.
+    """PyG Dataset for SDP problem instances with rank schedules.
 
     This dataset loads graph representations of SDP problems (.pt files) and
-    their corresponding solver labels (.json files). A sample is valid only if
-    both the .pt graph file and the .json label file exist.
+    their corresponding oracle rank schedules from solver JSON files.
+
+    Features:
+        - node features: 16 dimensions per constraint
+        - edge features: 5 dimensions per edge
+        - global features: 17 dimensions per problem
+
+    Labels:
+        - rank_schedule: Sequence of unique oracle ranks (variable length)
+        - schedule_length: Number of unique ranks in schedule
+        - final_rank: Final oracle rank
+        - initial_rank: Initial oracle rank
+        - max_rank: Maximum rank in schedule
+        - schedule_type: Classification ('constant', 'increasing', 'decreasing', 'mixed')
 
     Attributes:
-        root: Root directory containing 'proc/' and 'sol_json/' subdirectories.
-        valid_names: List of problem names that have both .pt and .json files.
+        root: Root directory containing 'proc/' and 'sol_json/' subdirectories
+        max_schedule_length: Maximum length for padded schedules
+        valid_names: List of problem names that have both .pt and .json files
     """
 
     def __init__(
         self,
         root: str,
+        max_schedule_length: int = 16,
         transform=None,
         pre_transform=None,
         pre_filter=None,
     ):
-        """Initialize the SDPDataset.
+        """Initializes the SDPDataset.
 
         Args:
-            root: Root directory path (should contain 'proc/' and 'sol_json/').
-            transform: Optional transform to apply to each data object.
-            pre_transform: Optional pre-transform (not used, for API compat).
-            pre_filter: Optional pre-filter (not used, for API compatibility).
+            root: Root directory path (should contain 'proc/' and 'sol_json/')
+            max_schedule_length: Maximum length for rank schedule sequences
+                Schedules longer than this are truncated; shorter ones are padded
+            transform: Optional transform to apply to each data object
+            pre_transform: Optional pre-transform (not used, for API compat)
+            pre_filter: Optional pre-filter (not used, for API compat)
         """
         self._root = Path(root)
         self.proc_dir = self._root / "proc"
         self.sol_dir = self._root / "sol_json"
+        self.max_schedule_length = max_schedule_length
+
         self.valid_names = self._find_valid_samples()
 
         self._indices = None
@@ -51,13 +147,10 @@ class SDPDataset(Dataset):
         self.pre_filter = pre_filter
 
     def _find_valid_samples(self) -> List[str]:
-        """Find problem names that have both .pt and .json files.
-
-        Prioritizes .pt files as the base, since some instances may have
-        .json files but missing .pt files.
+        """Finds problem names that have both .pt and .json files.
 
         Returns:
-            Sorted list of valid problem names (without extensions).
+            Sorted list of valid problem names (without extensions)
         """
         pt_files = set()
         if self.proc_dir.exists():
@@ -68,29 +161,38 @@ class SDPDataset(Dataset):
         if self.sol_dir.exists():
             for f in self.sol_dir.glob("*.json"):
                 json_files.add(f.stem)
-        valid = pt_files & json_files
 
+        valid = pt_files & json_files
         return sorted(list(valid))
 
     def len(self) -> int:
-        """Return the number of valid samples in the dataset."""
+        """Returns the number of valid samples in the dataset."""
         return len(self.valid_names)
 
     def get(self, idx: int) -> Data:
-        """Load a single data sample by index.
+        """Loads a single data sample by index.
 
         Args:
-            idx: Index of the sample to load.
+            idx: Index of the sample to load
 
         Returns:
             PyG Data object with:
-                - x: Node features [num_nodes, 8]
+                - x: Node features [num_nodes, 16]
                 - edge_index: Edge connectivity [2, num_edges]
-                - edge_attr: Edge features [num_edges, 2]
-                - global_attr: Global graph features [5]
-                - y: Oracle rank label (torch.float32, shape [1])
+                - edge_attr: Edge features [num_edges, 5]
+                - global_attr: Global graph features [17]
+                - rank_schedule: Padded oracle rank schedule [max_schedule_length]
+                - schedule_length: Original schedule length (scalar)
+                - schedule_mask: Binary mask for valid positions [max_schedule_length]
+                - final_rank: Final oracle rank (scalar)
+                - initial_rank: Initial oracle rank (scalar)
+                - max_rank: Maximum rank in schedule (scalar)
+                - schedule_type: Schedule classification string
                 - problem_id: Problem name string
                 - solver_time: Solve time in seconds (float)
+
+        Raises:
+            ValueError: If required data is missing from JSON file
         """
         name = self.valid_names[idx]
 
@@ -101,13 +203,38 @@ class SDPDataset(Dataset):
         with open(json_path, "r") as f:
             label_data = json.load(f)
 
-        metrics = label_data.get("final_metrics", label_data.get("metrics", {}))
-        oracle_rank = metrics.get("oracle_rank", None)
-        if oracle_rank is None:
-            raise ValueError(f"missing oracle_rank in {json_path}")
+        trajectory = label_data.get("trajectory", {})
+        schedule = extract_rank_schedule(trajectory)
 
-        data.y = torch.tensor([float(oracle_rank)], dtype=torch.float32)
+        if not schedule:
+
+            metrics = label_data.get("final_metrics", label_data.get("metrics", {}))
+            final_rank = metrics.get("oracle_rank")
+            if final_rank is not None:
+                schedule = [int(final_rank)]
+            else:
+                raise ValueError(f"no valid trajectory or oracle_rank in {json_path}")
+
+        padded_schedule, orig_length = pad_schedule(
+            schedule, self.max_schedule_length, pad_value=0
+        )
+        schedule_type = classify_schedule_type(schedule)
+
+        mask = [1] * min(orig_length, self.max_schedule_length)
+        mask += [0] * (self.max_schedule_length - len(mask))
+
+        data.rank_schedule = torch.tensor(padded_schedule, dtype=torch.float32)
+        data.schedule_length = torch.tensor([orig_length], dtype=torch.long)
+        data.schedule_mask = torch.tensor(mask, dtype=torch.float32)
+        data.final_rank = torch.tensor([float(schedule[-1])], dtype=torch.float32)
+        data.initial_rank = torch.tensor([float(schedule[0])], dtype=torch.float32)
+        data.max_rank = torch.tensor([float(max(schedule))], dtype=torch.float32)
+        data.schedule_type = schedule_type
+
+        data.y = data.final_rank.clone()
+
         data.problem_id = name
+        metrics = label_data.get("final_metrics", label_data.get("metrics", {}))
         data.solver_time = float(metrics.get("solve_time_sec", 0.0))
 
         if self.transform is not None:
@@ -117,13 +244,18 @@ class SDPDataset(Dataset):
 
     @property
     def num_node_features(self) -> int:
-        """Return the number of node features (expected to be 8)."""
-        return 8
+        """Returns the number of node features."""
+        return NUM_NODE_FEATURES
 
     @property
     def num_edge_features(self) -> int:
-        """Return the number of edge features (expected to be 2)."""
-        return 2
+        """Returns the number of edge features."""
+        return NUM_EDGE_FEATURES
+
+    @property
+    def num_global_features(self) -> int:
+        """Returns the number of global features."""
+        return NUM_GLOBAL_FEATURES
 
 
 def create_dataloaders(
@@ -134,23 +266,25 @@ def create_dataloaders(
     train_split: float = 0.9,
     val_split: float = 0.05,
     test_split: float = 0.05,
+    max_schedule_length: int = 16,
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
-    """Create train/val/test DataLoaders with configurable split ratios.
+    """Creates train/val/test DataLoaders with configurable split ratios.
 
     Args:
-        root: Root directory containing 'proc/' and 'sol_json/' subdirectories.
-        batch_size: Batch size for all loaders.
-        seed: Random seed for reproducible shuffling.
-        num_workers: Number of worker processes for data loading.
-        train_split: Fraction of data for training (default: 0.9).
-        val_split: Fraction of data for validation (default: 0.05).
-        test_split: Fraction of data for testing (default: 0.05).
+        root: Root directory containing 'proc/' and 'sol_json/' subdirectories
+        batch_size: Batch size for all loaders
+        seed: Random seed for reproducible shuffling
+        num_workers: Number of worker processes for data loading
+        train_split: Fraction of data for training
+        val_split: Fraction of data for validation
+        test_split: Fraction of data for testing
+        max_schedule_length: Maximum length for padded rank schedules
 
     Returns:
-        Tuple of (train_loader, val_loader, test_loader).
+        Tuple of (train_loader, val_loader, test_loader)
 
     Raises:
-        ValueError: If split ratios don't sum to 1.0 or no valid samples found.
+        ValueError: If split ratios don't sum to 1.0 or no valid samples found
     """
     total_split = train_split + val_split + test_split
     if abs(total_split - 1.0) > 1e-6:
@@ -159,7 +293,7 @@ def create_dataloaders(
             f"({train_split} + {val_split} + {test_split})"
         )
 
-    dataset = SDPDataset(root=root)
+    dataset = SDPDataset(root=root, max_schedule_length=max_schedule_length)
     num_samples = len(dataset)
 
     if num_samples == 0:
@@ -200,93 +334,3 @@ def create_dataloaders(
     )
 
     return train_loader, val_loader, test_loader
-
-
-def get_dataset_statistics(dataset: SDPDataset) -> dict:
-    """Compute statistics over the entire dataset.
-
-    Args:
-        dataset: The SDPDataset instance.
-
-    Returns:
-        Dictionary with total_samples, max_rank, min_rank, mean_rank.
-    """
-    ranks = []
-    for idx in range(len(dataset)):
-        data = dataset.get(idx)
-        ranks.append(data.y.item())
-
-    return {
-        "total_samples": len(ranks),
-        "max_rank": max(ranks) if ranks else 0,
-        "min_rank": min(ranks) if ranks else 0,
-        "mean_rank": sum(ranks) / len(ranks) if ranks else 0,
-    }
-
-
-if __name__ == "__main__":
-    root_dir = Path(__file__).parent
-
-    print("\n[1] initializing dataset...")
-    dataset = SDPDataset(root=str(root_dir))
-    print(f"    total valid samples: {len(dataset)}")
-    print(f"    valid problem names (first 10): {dataset.valid_names[:10]}")
-
-    print("\n[2] creating dataloaders (75%/15%/10% split)...")
-    train_loader, val_loader, test_loader = create_dataloaders(
-        root=str(root_dir),
-        batch_size=8,
-        seed=42,
-    )
-    print(f"    train samples: {len(train_loader.dataset)}")
-    print(f"    val samples:   {len(val_loader.dataset)}")
-    print(f"    test samples:  {len(test_loader.dataset)}")
-
-    print("\n[3] loading one batch from train loader...")
-    batch = next(iter(train_loader))
-    print(f"    batch type: {type(batch)}")
-    print(f"    batch.x.shape:          {batch.x.shape}")
-    print(f"    batch.edge_index.shape: {batch.edge_index.shape}")
-    print(f"    batch.edge_attr.shape:  {batch.edge_attr.shape}")
-    print(f"    batch.y.shape:          {batch.y.shape}")
-    print(f"    batch.y (labels):       {batch.y}")
-    print(f"    batch.batch.shape:      {batch.batch.shape}")
-
-    if hasattr(batch, "problem_id"):
-        print(f"    problem_ids:            {batch.problem_id}")
-
-    print("\n[4] computing statistics...")
-    stats = get_dataset_statistics(dataset)
-    print(f"    total samples: {stats['total_samples']}")
-    print(f"    max rank:      {stats['max_rank']:.0f}")
-    print(f"    min rank:      {stats['min_rank']:.0f}")
-    print(f"    mean rank:     {stats['mean_rank']:.2f}")
-
-    print("\n[5] running checks...")
-    expected_node_features = 8
-    actual_node_features = batch.x.shape[1]
-    assert actual_node_features == expected_node_features, (
-        f"node feature dimension mismatch: expected {expected_node_features}, "
-        f"got {actual_node_features}"
-    )
-    print(f"    [p] node features have expected dimension ({expected_node_features})")
-
-    assert not torch.isnan(batch.y).any(), "labels contain NaN values"
-    print("    [p] labels do not contain NaN values")
-
-    assert (batch.y > 0).all(), "labels contain non-positive values"
-    print("    [p] labels are positive (valid ranks)")
-
-    assert batch.edge_index.shape[0] == 2, "edge_index should have 2 rows"
-    print("    [p] edge_index has correct shape")
-
-    print("\n[6] individual sample loading...")
-    for i in range(min(3, len(dataset))):
-        data = dataset.get(i)
-        assert data.x is not None, f"sample {i}: x is None"
-        assert data.y is not None, f"sample {i}: y is None"
-        assert data.x.shape[1] == 8, f"sample {i}: wrong node feature dim"
-        assert not torch.isnan(data.y).any(), f"sample {i}: y contains NaN"
-        print(
-            f"    [p] sample '{data.problem_id}': x={data.x.shape}, y={data.y.item():.0f}"
-        )
