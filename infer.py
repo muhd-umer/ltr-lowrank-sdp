@@ -60,7 +60,6 @@ def load_model(
             "num_heads": 4,
             "decoder_hidden_dim": 128,
             "decoder_num_layers": 2,
-            "decoder_type": "lstm",
             "max_seq_len": 16,
             "dropout": 0.1,
         }
@@ -78,7 +77,6 @@ def load_model(
 
     print(f"loaded model from: {checkpoint_path}")
     print(f"  parameters: {model.count_parameters():,}")
-    print(f"  decoder type: {model_config.get('decoder_type', 'lstm')}")
     print(f"  max seq len: {model_config.get('max_seq_len', 16)}")
 
     return model

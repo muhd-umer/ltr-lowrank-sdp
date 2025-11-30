@@ -23,7 +23,6 @@ from model.layers import (
     GlobalEncoder,
     NodeEncoder,
     SequenceDecoder,
-    TransformerDecoder,
 )
 
 
@@ -178,7 +177,6 @@ class RankSchedulePredictor(nn.Module):
     Attributes:
         encoder: GNN encoder for graph processing
         decoder: Sequence decoder for rank schedule generation
-        decoder_type: Type of decoder ("lstm" or "transformer")
         max_seq_len: Maximum sequence length
     """
 
@@ -194,7 +192,6 @@ class RankSchedulePredictor(nn.Module):
         num_heads: int = 4,
         decoder_hidden_dim: int = 128,
         decoder_num_layers: int = 2,
-        decoder_type: Literal["lstm", "transformer"] = "lstm",
         max_seq_len: int = 16,
         dropout: float = 0.1,
         norm_type: Literal["batch", "layer", "none"] = "layer",
@@ -212,7 +209,6 @@ class RankSchedulePredictor(nn.Module):
             num_heads: Number of attention heads in GATv2Conv
             decoder_hidden_dim: Hidden dimension for sequence decoder
             decoder_num_layers: Number of decoder layers
-            decoder_type: Type of decoder ("lstm" or "transformer")
             max_seq_len: Maximum sequence length for rank schedules
             dropout: Dropout probability
             norm_type: Type of normalization
@@ -220,7 +216,6 @@ class RankSchedulePredictor(nn.Module):
         super().__init__()
 
         self.hidden_dim = hidden_dim
-        self.decoder_type = decoder_type
         self.max_seq_len = max_seq_len
 
         self.encoder = GNNEncoder(
@@ -237,23 +232,13 @@ class RankSchedulePredictor(nn.Module):
         )
 
         context_dim = self.encoder.output_dim
-        if decoder_type == "lstm":
-            self.decoder = SequenceDecoder(
-                context_dim=context_dim,
-                hidden_dim=decoder_hidden_dim,
-                num_layers=decoder_num_layers,
-                dropout=dropout,
-                max_seq_len=max_seq_len,
-            )
-        else:
-            self.decoder = TransformerDecoder(
-                context_dim=context_dim,
-                hidden_dim=decoder_hidden_dim,
-                num_heads=num_heads,
-                num_layers=decoder_num_layers,
-                dropout=dropout,
-                max_seq_len=max_seq_len,
-            )
+        self.decoder = SequenceDecoder(
+            context_dim=context_dim,
+            hidden_dim=decoder_hidden_dim,
+            num_layers=decoder_num_layers,
+            dropout=dropout,
+            max_seq_len=max_seq_len,
+        )
 
     def forward(
         self,
@@ -364,7 +349,6 @@ class RankSchedulePredictor(nn.Module):
         return (
             f"{self.__class__.__name__}("
             f"hidden_dim={self.hidden_dim}, "
-            f"decoder_type={self.decoder_type}, "
             f"max_seq_len={self.max_seq_len}, "
             f"params={self.count_parameters():,})"
         )

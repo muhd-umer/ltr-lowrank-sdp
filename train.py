@@ -4,7 +4,6 @@ rank schedules (trajectories) for SDP problems.
 
 Example usage:
     >>> python train.py --epochs 300 --batch-size 16 --hidden-dim 128
-    >>> python train.py --decoder-type transformer --epochs 500
     >>> python train.py --data-root dataset --log-dir runs/exp1 --patience 30
 
 For long training runs, set environment variable to reduce memory fragmentation:
@@ -184,6 +183,7 @@ def train_epoch(
     teacher_forcing_ratio: float = 0.5,
     scaler: Optional[torch.amp.GradScaler] = None,
     max_grad_norm: float = 1.0,
+    accumulation_steps: int = 1,
 ) -> Dict[str, float]:
     """Run one training epoch.
 
@@ -196,6 +196,7 @@ def train_epoch(
         teacher_forcing_ratio: Probability of teacher forcing
         scaler: GradScaler for AMP (None to disable AMP)
         max_grad_norm: Maximum gradient norm for clipping
+        accumulation_steps: Number of steps to accumulate gradients
 
     Returns:
         Dictionary with average losses for the epoch
@@ -212,6 +213,8 @@ def train_epoch(
 
     use_amp = scaler is not None and device.type == "cuda"
 
+    optimizer.zero_grad()
+
     for batch_idx, batch in enumerate(tqdm(loader, desc="training", leave=False)):
         batch = batch.to(device)
         global_attr = extract_global_attr(batch).to(device)
@@ -219,8 +222,6 @@ def train_epoch(
         target_schedule = batch.rank_schedule.view(-1, model.max_seq_len)
         target_length = batch.schedule_length.view(-1, 1)
         mask = batch.schedule_mask.view(-1, model.max_seq_len)
-
-        optimizer.zero_grad()
 
         with torch.amp.autocast(device_type="cuda", enabled=use_amp):
             pred_schedule, pred_length_logits = model(
@@ -242,16 +243,27 @@ def train_epoch(
                 mask=mask,
             )
 
+            loss = loss / accumulation_steps
+
         if use_amp:
             scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-            scaler.step(optimizer)
-            scaler.update()
         else:
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-            optimizer.step()
+
+        if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(loader):
+            if use_amp:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=max_grad_norm
+                )
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=max_grad_norm
+                )
+                optimizer.step()
+            optimizer.zero_grad()
 
         for key in total_losses:
             total_losses[key] += loss_dict[key]
@@ -566,8 +578,14 @@ def main():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=4,
+        default=2,
         help="Batch size for training and evaluation",
+    )
+    parser.add_argument(
+        "--accumulation-steps",
+        type=int,
+        default=8,
+        help="Gradient accumulation steps (effective batch = batch-size * accumulation-steps)",
     )
     parser.add_argument(
         "--lr",
@@ -676,13 +694,6 @@ def main():
         default=0.1,
         help="Dropout probability",
     )
-    parser.add_argument(
-        "--decoder-type",
-        type=str,
-        default="lstm",
-        choices=["lstm", "transformer"],
-        help="Type of sequence decoder",
-    )
 
     # runtime settings
     parser.add_argument(
@@ -746,6 +757,9 @@ def main():
     print(f"  train samples: {len(train_loader.dataset)}")
     print(f"  val samples: {len(val_loader.dataset)}")
     print(f"  test samples: {len(test_loader.dataset)}")
+    print(
+        f"  effective batch size: {args.batch_size} x {args.accumulation_steps} = {args.batch_size * args.accumulation_steps}"
+    )
 
     sample_data = train_loader.dataset[0]
     node_in_dim = sample_data.x.size(-1)
@@ -767,7 +781,6 @@ def main():
         "num_heads": args.heads,
         "decoder_hidden_dim": args.decoder_hidden,
         "decoder_num_layers": args.decoder_layers,
-        "decoder_type": args.decoder_type,
         "max_seq_len": args.max_seq_len,
         "dropout": args.dropout,
     }
@@ -823,6 +836,8 @@ def main():
     training_config = {
         "epochs": args.epochs,
         "batch_size": args.batch_size,
+        "accumulation_steps": args.accumulation_steps,
+        "effective_batch_size": args.batch_size * args.accumulation_steps,
         "lr": args.lr,
         "weight_decay": args.weight_decay,
         "patience": args.patience,
@@ -861,6 +876,7 @@ def main():
             device,
             teacher_forcing_ratio=tf_ratio,
             scaler=scaler,
+            accumulation_steps=args.accumulation_steps,
         )
 
         val_metrics = evaluate(
