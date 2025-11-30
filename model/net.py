@@ -1,85 +1,79 @@
 """\
-This module implements the main GNN architecture for predicting the optimal
-rank (r_oracle) required to solve SDP problems. The model performs graph
-regression by encoding the constraint graph structure and predicting a single
-scalar value.
+Model architecture for predicting rank schedules/trajectories.
 
 Example usage:
-    >>> from model.net import RankPredictor
-    >>> model = RankPredictor()
-    >>> out = model(x, edge_index, edge_attr, batch, global_attr)
-    >>> print(out.shape)  # [batch_size, 1]
+    >>> from model.net import RankSchedulePredictor
+    >>> model = RankSchedulePredictor()
+    >>> schedule, lengths, length_logits = model(
+    ...     x, edge_index, edge_attr, batch, global_attr
+    ... )
+    >>> print(schedule.shape)
 """
 
-from typing import List, Literal, Optional
+from typing import Literal, Optional, Tuple
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch_geometric.nn import GATv2Conv, global_max_pool, global_mean_pool
 
-from model.layers import EdgeEncoder, GlobalEncoder, NodeEncoder, PredictionHead
+from model.layers import (
+    AttentionPooling,
+    EdgeEncoder,
+    GlobalEncoder,
+    NodeEncoder,
+    SequenceDecoder,
+    TransformerDecoder,
+)
 
 
-class RankPredictor(nn.Module):
-    """Graph Neural Network for predicting optimal SDP rank.
+class GNNEncoder(nn.Module):
+    """GNN encoder for SDP problem instances.
 
-    This model takes constraint graphs from SDP problem instances and predicts
-    the oracle rank required for efficient solving. It uses GATv2Conv layers
-    with attention over edges, residual connections, and concatenated pooling.
-
-    The architecture is designed for graph regression where:
-        - Nodes represent constraints with 8 spectral/structural features.
-        - Edges represent constraint coupling with 2 similarity features.
-        - Global features capture problem-level properties (log n, log m, etc).
+    Processes the constraint graph using GATv2Conv layers with edge features,
+    then aggregates node embeddings into a fixed-size graph representation.
 
     Attributes:
-        node_encoder: Projects raw node features to hidden_dim.
-        edge_encoder: Projects raw edge features to edge_dim.
-        global_encoder: Projects global features to global_dim.
-        convs: ModuleList of GATv2Conv layers.
-        norms: ModuleList of LayerNorm layers for conv outputs.
-        head: Prediction MLP mapping fused embedding to scalar rank.
-        dropout: Dropout module for regularization.
-        log_output: Whether to predict in log-space.
+        node_encoder: Projects raw node features
+        edge_encoder: Projects raw edge features
+        global_encoder: Projects global features
+        convs: ModuleList of GATv2Conv layers
+        norms: ModuleList of normalization layers
+        attn_pool: Attention-based pooling
     """
 
     def __init__(
         self,
-        node_in_dim: int = 8,
-        edge_in_dim: int = 2,
-        global_in_dim: int = 5,
-        hidden_dim: int = 64,
-        edge_dim: int = 32,
-        global_dim: int = 32,
+        node_in_dim: int = 16,
+        edge_in_dim: int = 5,
+        global_in_dim: int = 17,
+        hidden_dim: int = 128,
+        edge_dim: int = 64,
+        global_dim: int = 64,
         num_layers: int = 4,
         num_heads: int = 4,
         dropout: float = 0.1,
         norm_type: Literal["batch", "layer", "none"] = "layer",
-        log_output: bool = True,
     ) -> None:
-        """Initialize the RankPredictor model.
+        """Initialize the GNN encoder.
 
         Args:
-            node_in_dim: Input dimension for node features. Defaults to 8.
-            edge_in_dim: Input dimension for edge features. Defaults to 2.
-            global_in_dim: Input dimension for global features. Defaults to 5.
-            hidden_dim: Hidden dimension for node embeddings. Defaults to 64.
-            edge_dim: Latent dimension for edge embeddings. Defaults to 32.
-            global_dim: Latent dimension for global embeddings. Defaults to 32.
-            num_layers: Number of GATv2Conv layers. Defaults to 4.
-            num_heads: Number of attention heads in GATv2Conv. Defaults to 4.
-            dropout: Dropout probability. Defaults to 0.1.
-            norm_type: Type of normalization ("batch", "layer", or "none").
-                Defaults to "layer" for stability with variable graph sizes.
-            log_output: If True, predict in log-space (recommended for labels
-                spanning multiple orders of magnitude). Defaults to True.
+            node_in_dim: Input dimension for node features
+            edge_in_dim: Input dimension for edge features
+            global_in_dim: Input dimension for global features
+            hidden_dim: Hidden dimension for node embeddings
+            edge_dim: Latent dimension for edge embeddings
+            global_dim: Latent dimension for global embeddings
+            num_layers: Number of GATv2Conv layers
+            num_heads: Number of attention heads in GATv2Conv
+            dropout: Dropout probability
+            norm_type: Type of normalization
         """
         super().__init__()
 
         self.hidden_dim = hidden_dim
+        self.global_dim = global_dim
         self.num_layers = num_layers
-        self.log_output = log_output
         self.dropout = nn.Dropout(p=dropout)
 
         self.node_encoder = NodeEncoder(
@@ -103,13 +97,10 @@ class RankPredictor(nn.Module):
 
         self.convs = nn.ModuleList()
         self.norms = nn.ModuleList()
-
-        for i in range(num_layers):
-            in_channels = hidden_dim
+        for _ in range(num_layers):
             out_channels = hidden_dim // num_heads
-
             conv = GATv2Conv(
-                in_channels=in_channels,
+                in_channels=hidden_dim,
                 out_channels=out_channels,
                 heads=num_heads,
                 concat=True,
@@ -127,14 +118,12 @@ class RankPredictor(nn.Module):
             else:
                 self.norms.append(nn.Identity())
 
-        graph_embed_dim = 2 * hidden_dim
-        fused_dim = graph_embed_dim + global_dim
-        self.head = PredictionHead(
-            in_dim=fused_dim,
-            hidden_dim=hidden_dim,
+        self.attn_pool = AttentionPooling(
+            in_dim=hidden_dim,
+            hidden_dim=hidden_dim // 2,
             dropout=dropout,
-            log_output=log_output,
         )
+        self.output_dim = 3 * hidden_dim + global_dim
 
     def forward(
         self,
@@ -144,18 +133,19 @@ class RankPredictor(nn.Module):
         batch: Tensor,
         global_attr: Tensor,
     ) -> Tensor:
-        """Forward pass for rank prediction.
+        """Forward pass for graph embedding.
 
         Args:
-            x: Node features of shape [num_nodes, node_in_dim].
-            edge_index: Edge connectivity of shape [2, num_edges].
-            edge_attr: Edge features of shape [num_edges, edge_in_dim].
-            batch: Batch assignment vector of shape [num_nodes].
-            global_attr: Global features of shape [batch_size, global_in_dim].
+            x: Node features [num_nodes, node_in_dim]
+            edge_index: Edge connectivity [2, num_edges]
+            edge_attr: Edge features [num_edges, edge_in_dim]
+            batch: Batch assignment [num_nodes]
+            global_attr: Global features [batch_size, global_in_dim]
 
         Returns:
-            Predicted rank of shape [batch_size, 1], guaranteed positive.
+            Graph embedding [batch_size, output_dim]
         """
+
         x = self.node_encoder(x)
         edge_attr = self.edge_encoder(edge_attr)
         g = self.global_encoder(global_attr)
@@ -170,12 +160,140 @@ class RankPredictor(nn.Module):
 
         x_mean = global_mean_pool(x, batch)
         x_max = global_max_pool(x, batch)
-        graph_embed = torch.cat([x_mean, x_max], dim=-1)
-        fused = torch.cat([graph_embed, g], dim=-1)
+        x_attn = self.attn_pool(x, batch)
 
-        rank = self.head(fused)
+        graph_embed = torch.cat([x_mean, x_max, x_attn, g], dim=-1)
 
-        return rank
+        return graph_embed
+
+
+class RankSchedulePredictor(nn.Module):
+    """Model for predicting rank schedules from SDP problem graphs.
+
+    Combines GNN encoder with a sequence decoder to predict variable-length
+    rank schedules. The model predicts both:
+    - rank values at each step of the schedule
+    - length of the schedule (number of unique rank values)
+
+    Attributes:
+        encoder: GNN encoder for graph processing
+        decoder: Sequence decoder for rank schedule generation
+        decoder_type: Type of decoder ("lstm" or "transformer")
+        max_seq_len: Maximum sequence length
+    """
+
+    def __init__(
+        self,
+        node_in_dim: int = 16,
+        edge_in_dim: int = 5,
+        global_in_dim: int = 17,
+        hidden_dim: int = 128,
+        edge_dim: int = 64,
+        global_dim: int = 64,
+        num_gnn_layers: int = 4,
+        num_heads: int = 4,
+        decoder_hidden_dim: int = 128,
+        decoder_num_layers: int = 2,
+        decoder_type: Literal["lstm", "transformer"] = "lstm",
+        max_seq_len: int = 16,
+        dropout: float = 0.1,
+        norm_type: Literal["batch", "layer", "none"] = "layer",
+    ) -> None:
+        """Initialize the RankSchedulePredictor.
+
+        Args:
+            node_in_dim: Input dimension for node features
+            edge_in_dim: Input dimension for edge features
+            global_in_dim: Input dimension for global features
+            hidden_dim: Hidden dimension for GNN layers
+            edge_dim: Latent dimension for edge embeddings
+            global_dim: Latent dimension for global embeddings
+            num_gnn_layers: Number of GATv2Conv layers
+            num_heads: Number of attention heads in GATv2Conv
+            decoder_hidden_dim: Hidden dimension for sequence decoder
+            decoder_num_layers: Number of decoder layers
+            decoder_type: Type of decoder ("lstm" or "transformer")
+            max_seq_len: Maximum sequence length for rank schedules
+            dropout: Dropout probability
+            norm_type: Type of normalization
+        """
+        super().__init__()
+
+        self.hidden_dim = hidden_dim
+        self.decoder_type = decoder_type
+        self.max_seq_len = max_seq_len
+
+        self.encoder = GNNEncoder(
+            node_in_dim=node_in_dim,
+            edge_in_dim=edge_in_dim,
+            global_in_dim=global_in_dim,
+            hidden_dim=hidden_dim,
+            edge_dim=edge_dim,
+            global_dim=global_dim,
+            num_layers=num_gnn_layers,
+            num_heads=num_heads,
+            dropout=dropout,
+            norm_type=norm_type,
+        )
+
+        context_dim = self.encoder.output_dim
+        if decoder_type == "lstm":
+            self.decoder = SequenceDecoder(
+                context_dim=context_dim,
+                hidden_dim=decoder_hidden_dim,
+                num_layers=decoder_num_layers,
+                dropout=dropout,
+                max_seq_len=max_seq_len,
+            )
+        else:
+            self.decoder = TransformerDecoder(
+                context_dim=context_dim,
+                hidden_dim=decoder_hidden_dim,
+                num_heads=num_heads,
+                num_layers=decoder_num_layers,
+                dropout=dropout,
+                max_seq_len=max_seq_len,
+            )
+
+    def forward(
+        self,
+        x: Tensor,
+        edge_index: Tensor,
+        edge_attr: Tensor,
+        batch: Tensor,
+        global_attr: Tensor,
+        target_schedule: Optional[Tensor] = None,
+        target_mask: Optional[Tensor] = None,
+        teacher_forcing_ratio: float = 0.5,
+    ) -> Tuple[Tensor, Tensor]:
+        """Forward pass for training.
+
+        Args:
+            x: Node features [num_nodes, node_in_dim]
+            edge_index: Edge connectivity [2, num_edges]
+            edge_attr: Edge features [num_edges, edge_in_dim]
+            batch: Batch assignment [num_nodes]
+            global_attr: Global features [batch_size, global_in_dim]
+            target_schedule: Target rank schedule [batch_size, max_seq_len]
+            target_mask: Binary mask for valid positions
+            teacher_forcing_ratio: Probability of teacher forcing
+
+        Returns:
+            Tuple of:
+                - predictions: Rank predictions [batch_size, max_seq_len]
+                - length_logits: Logits for sequence length [batch_size, max_seq_len]
+        """
+
+        context = self.encoder(x, edge_index, edge_attr, batch, global_attr)
+
+        predictions, length_logits = self.decoder(
+            context,
+            target_schedule=target_schedule,
+            target_mask=target_mask,
+            teacher_forcing_ratio=teacher_forcing_ratio,
+        )
+
+        return predictions, length_logits
 
     @torch.no_grad()
     def predict(
@@ -186,33 +304,59 @@ class RankPredictor(nn.Module):
         batch: Tensor,
         global_attr: Tensor,
         min_rank: int = 1,
-    ) -> Tensor:
-        """Predict integer ranks for inference.
-
-        This is a convenience method that rounds the continuous output to
-        integers suitable for use with the LoRADS solver.
+        return_integers: bool = True,
+    ) -> Tuple[Tensor, Tensor]:
+        """Generate rank schedule for inference.
 
         Args:
-            x: Node features of shape [num_nodes, node_in_dim].
-            edge_index: Edge connectivity of shape [2, num_edges].
-            edge_attr: Edge features of shape [num_edges, edge_in_dim].
-            batch: Batch assignment vector of shape [num_nodes].
-            global_attr: Global features of shape [batch_size, global_in_dim].
-            min_rank: Minimum rank to clamp to. Defaults to 1.
+            x: Node features [num_nodes, node_in_dim]
+            edge_index: Edge connectivity [2, num_edges]
+            edge_attr: Edge features [num_edges, edge_in_dim]
+            batch: Batch assignment [num_nodes]
+            global_attr: Global features [batch_size, global_in_dim]
+            min_rank: Minimum rank to clamp predictions
+            return_integers: If True, round predictions to integers
 
         Returns:
-            Predicted integer ranks of shape [batch_size, 1], dtype=torch.long.
+            Tuple of:
+                - schedule: Predicted rank schedule [batch_size, max_seq_len]
+                - lengths: Predicted sequence lengths [batch_size]
         """
-        continuous_rank = self.forward(x, edge_index, edge_attr, batch, global_attr)
-        integer_rank = torch.round(continuous_rank).long().clamp(min=min_rank)
-        return integer_rank
+        self.eval()
+
+        context = self.encoder(x, edge_index, edge_attr, batch, global_attr)
+        schedule, lengths = self.decoder.generate(context, min_rank=min_rank)
+        if return_integers:
+            schedule = torch.round(schedule).long().clamp(min=min_rank)
+
+        return schedule, lengths
+
+    def get_valid_schedule(
+        self,
+        schedule: Tensor,
+        lengths: Tensor,
+    ) -> list:
+        """Extract valid rank schedules (without padding) as Python lists.
+
+        Args:
+            schedule: Full schedule tensor [batch_size, max_seq_len]
+            lengths: Sequence lengths [batch_size]
+
+        Returns:
+            List of lists containing valid rank values for each sample
+        """
+        batch_size = schedule.size(0)
+        result = []
+
+        for i in range(batch_size):
+            length = lengths[i].item()
+            valid_ranks = schedule[i, :length].tolist()
+            result.append(valid_ranks)
+
+        return result
 
     def count_parameters(self) -> int:
-        """Count the total number of trainable parameters.
-
-        Returns:
-            Total number of trainable parameters.
-        """
+        """Count the total number of trainable parameters."""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def __repr__(self) -> str:
@@ -220,7 +364,10 @@ class RankPredictor(nn.Module):
         return (
             f"{self.__class__.__name__}("
             f"hidden_dim={self.hidden_dim}, "
-            f"num_layers={self.num_layers}, "
-            f"log_output={self.log_output}, "
+            f"decoder_type={self.decoder_type}, "
+            f"max_seq_len={self.max_seq_len}, "
             f"params={self.count_parameters():,})"
         )
+
+
+RankPredictor = RankSchedulePredictor

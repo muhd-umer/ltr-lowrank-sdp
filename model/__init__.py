@@ -1,41 +1,59 @@
 """Model package for Learning to Rank SDP solver.
 
-This package provides the GNN architecture for predicting the optimal rank
-(r_oracle) required to solve SDP problems efficiently.
+This package provides the GNN architecture for predicting optimal rank
+schedules (trajectories) required to solve SDP problems efficiently.
 
 Main Components:
-    - RankPredictor: Graph-to-scalar GNN for rank prediction.
-    - NodeEncoder: Encoder for constraint node features.
-    - EdgeEncoder: Encoder for constraint coupling edge features.
-    - GlobalEncoder: Encoder for problem-level global features.
-    - PredictionHead: MLP head with log-space output for rank prediction.
-    - MLPBlock: Generic MLP building block.
+    - RankSchedulePredictor: Full encoder-decoder model for schedule prediction.
+    - GNNEncoder: Graph neural network encoder for constraint graphs.
+    - SequenceDecoder: LSTM-based autoregressive decoder.
+    - TransformerDecoder: Transformer-based decoder (alternative).
+
+Encoder Components:
+    - NodeEncoder: Projects constraint node features to latent space.
+    - EdgeEncoder: Projects edge coupling features to latent space.
+    - GlobalEncoder: Projects problem-level features to latent space.
+    - AttentionPooling: Attention-weighted graph aggregation.
+    - MLPBlock: Generic feedforward building block.
 
 Design Choices:
-    - LayerNorm (default) over BatchNorm for stability with variable graph sizes.
-    - Log-space prediction (default) to handle extreme label ranges (1 to 8000+).
-    - GATv2Conv backbone with residual connections for expressive power.
+    - Encoder-decoder architecture for variable-length output sequences.
+    - GATv2Conv backbone with residual connections for graph encoding.
+    - Multi-head pooling (mean, max, attention) for robust aggregation.
+    - Log-space prediction for handling wide rank ranges.
+    - Teacher forcing support for stable training.
 
 Example:
-    >>> from model import RankPredictor
-    >>> model = RankPredictor(hidden_dim=64, num_layers=4, log_output=True)
-    >>> rank = model(x, edge_index, edge_attr, batch, global_attr)
+    >>> from model import RankSchedulePredictor
+    >>> model = RankSchedulePredictor(hidden_dim=128, decoder_type="lstm")
+    >>> schedule, length_logits = model(
+    ...     x, edge_index, edge_attr, batch, global_attr
+    ... )
 """
 
 from model.layers import (
+    AttentionPooling,
     EdgeEncoder,
     GlobalEncoder,
     MLPBlock,
     NodeEncoder,
-    PredictionHead,
+    SequenceDecoder,
+    TransformerDecoder,
 )
-from model.net import RankPredictor
+from model.net import GNNEncoder, RankPredictor, RankSchedulePredictor
 
 __all__ = [
-    "RankPredictor",
+    # main model
+    "RankSchedulePredictor",
+    "RankPredictor",  # alias for backward compatibility
+    "GNNEncoder",
+    # layers
     "NodeEncoder",
     "EdgeEncoder",
     "GlobalEncoder",
-    "PredictionHead",
+    "AttentionPooling",
     "MLPBlock",
+    # decoders
+    "SequenceDecoder",
+    "TransformerDecoder",
 ]
