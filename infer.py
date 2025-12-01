@@ -91,14 +91,14 @@ def load_instance(
     """Load a single SDP problem instance.
 
     Args:
-        input_path: Path to the .pt graph file.
-        sol_dir: Directory containing solution JSON files.
-        device: Device to load tensors onto.
-        max_seq_len: Maximum sequence length for schedules.
+        input_path: Path to the .pt graph file
+        sol_dir: Directory containing solution JSON files
+        device: Device to load tensors onto
+        max_seq_len: Maximum sequence length for schedules
 
     Returns:
         Tuple of (x, edge_index, edge_attr, global_attr, label_info) where
-        label_info contains the ground truth rank schedule.
+        label_info contains the ground truth rank schedule
     """
     data = torch.load(input_path, weights_only=False)
 
@@ -160,16 +160,16 @@ def predict_schedule(
     """Predict rank schedule for a single instance.
 
     Args:
-        model: Trained RankSchedulePredictor model.
-        x: Node features [num_nodes, node_dim].
-        edge_index: Edge connectivity [2, num_edges].
-        edge_attr: Edge features [num_edges, edge_dim].
-        global_attr: Global features [1, global_dim].
-        min_rank: Minimum rank value to clamp predictions.
+        model: Trained RankSchedulePredictor model
+        x: Node features [num_nodes, node_dim]
+        edge_index: Edge connectivity [2, num_edges]
+        edge_attr: Edge features [num_edges, edge_dim]
+        global_attr: Global features [1, global_dim]
+        min_rank: Minimum rank value to clamp predictions
 
     Returns:
         Tuple of (schedule, predicted_length) where schedule is a list
-        of integer ranks.
+        of integer ranks
     """
 
     batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
@@ -199,14 +199,14 @@ def resolve_input_path(input_arg: str, data_root: Path) -> Path:
     - Problem name only: G1
 
     Args:
-        input_arg: User-provided input argument.
-        data_root: Dataset root directory.
+        input_arg: User-provided input argument
+        data_root: Dataset root directory
 
     Returns:
-        Resolved Path to the .pt file.
+        Resolved Path to the .pt file
 
     Raises:
-        FileNotFoundError: If the file cannot be found.
+        FileNotFoundError: If the file cannot be found
     """
     input_path = Path(input_arg)
 
@@ -240,11 +240,11 @@ def compute_schedule_metrics(
     """Compute metrics comparing predicted and true schedules.
 
     Args:
-        pred_schedule: Predicted rank schedule.
-        true_schedule: Ground truth rank schedule (may be None).
+        pred_schedule: Predicted rank schedule
+        true_schedule: Ground truth rank schedule (may be None)
 
     Returns:
-        Dictionary with various comparison metrics.
+        Dictionary with various comparison metrics
     """
     metrics = {
         "pred_length": len(pred_schedule),
@@ -331,14 +331,13 @@ def run_batch_inference(
     """Run inference on all instances in the dataset.
 
     Args:
-        model: Trained RankSchedulePredictor model.
-        data_root: Dataset root directory.
-        device: Device to run on.
-        output_path: Optional path to save results JSON.
-        max_seq_len: Maximum sequence length.
-
+        model: Trained RankSchedulePredictor model
+        data_root: Dataset root directory
+        device: Device to run on
+        output_path: Optional path to save results JSON
+        max_seq_len: Maximum sequence length
     Returns:
-        Dictionary with aggregated results and statistics.
+        Dictionary with aggregated results and statistics
     """
     proc_dir = data_root / "proc"
     sol_dir = data_root / "sol_json"

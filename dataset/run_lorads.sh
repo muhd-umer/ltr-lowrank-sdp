@@ -14,12 +14,12 @@ cleanup() {
 trap cleanup SIGINT
 
 if [ ! -f "$LORADS_EXECUTABLE" ]; then
-    echo "Error: LoRADS executable not found at $LORADS_EXECUTABLE"
+    echo "[error]: LoRADS executable not found at $LORADS_EXECUTABLE"
     exit 1
 fi
 
 if [ ! -d "$DATA_DIR" ]; then
-    echo "Error: Data directory not found at $DATA_DIR"
+    echo "[error]: data directory not found at $DATA_DIR"
     exit 1
 fi
 
@@ -76,7 +76,7 @@ get_lorads_params() {
     echo "--phase1Tol $phase1_tol --heuristicFactor $heuristic_factor --timesLogRank $times_log_rank --rhoMax $rho_max --timeSecLimit $TIMEOUT_DURATION --reoptLevel 0"
 }
 
-echo "Running LoRADS on all problem instances in $DATA_DIR"
+echo "running LoRADS on all problem instances in $DATA_DIR"
 
 total=0
 success=0

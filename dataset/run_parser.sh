@@ -13,27 +13,27 @@ if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
 fi
 
 cleanup() {
-    echo -e "\nScript interrupted. Exiting gracefully."
+    echo -e "\nscript interrupted. exiting..."
     exit 1
 }
 
 trap cleanup SIGINT
 
 if [ ! -f "$PROCESSOR" ]; then
-    echo "Error: Processor script not found at $PROCESSOR"
+    echo "[error]: processor script not found at $PROCESSOR"
     exit 1
 fi
 
 if [ ! -d "$DATA_DIR" ]; then
-    echo "Error: Data directory not found at $DATA_DIR"
+    echo "[error]: data directory not found at $DATA_DIR"
     exit 1
 fi
 
 mkdir -p "$OUTPUT_DIR"
 
-echo "Processing SDPA files to PyG graphs"
-echo "  Input:  $DATA_DIR"
-echo "  Output: $OUTPUT_DIR"
+echo "processing SDPA files to PyG graphs"
+echo "  input:  $DATA_DIR"
+echo "  output: $OUTPUT_DIR"
 echo ""
 
 total=0
