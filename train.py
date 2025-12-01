@@ -54,6 +54,9 @@ class RankScheduleLoss(nn.Module):
         schedule_weight: float = 1.0,
         length_weight: float = 0.5,
         mono_weight: float = 0.1,
+        initial_weight: float = 0.25,
+        final_weight: float = 0.25,
+        under_weight: float = 2.5,
         eps: float = 1e-6,
         label_smoothing: float = 0.1,
     ) -> None:
@@ -63,6 +66,9 @@ class RankScheduleLoss(nn.Module):
             schedule_weight: Weight for schedule prediction loss
             length_weight: Weight for length prediction loss
             mono_weight: Weight for monotonicity penalty (0 to disable)
+            initial_weight: Weight for auxiliary initial-rank loss
+            final_weight: Weight for auxiliary final-rank loss
+            under_weight: Multiplier applied to under-prediction errors
             eps: Small constant for numerical stability
             label_smoothing: Label smoothing for length classification
         """
@@ -70,6 +76,9 @@ class RankScheduleLoss(nn.Module):
         self.schedule_weight = schedule_weight
         self.length_weight = length_weight
         self.mono_weight = mono_weight
+        self.initial_weight = initial_weight
+        self.final_weight = final_weight
+        self.under_weight = under_weight
         self.eps = eps
         self.label_smoothing = label_smoothing
 
@@ -80,6 +89,7 @@ class RankScheduleLoss(nn.Module):
         pred_length_logits: torch.Tensor,
         target_length: torch.Tensor,
         mask: torch.Tensor,
+        pred_initial: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """Compute the multi-objective loss.
 
@@ -89,6 +99,7 @@ class RankScheduleLoss(nn.Module):
             pred_length_logits: Logits for length [batch_size, max_seq_len]
             target_length: True sequence lengths [batch_size, 1]
             mask: Binary mask [batch_size, max_seq_len] for valid positions
+            pred_initial: Optional predicted initial rank [batch_size, 1]
 
         Returns:
             Tuple of (total_loss, loss_dict) where loss_dict contains
@@ -99,9 +110,11 @@ class RankScheduleLoss(nn.Module):
         target_log = torch.log(target_schedule.clamp(min=self.eps))
 
         sq_error = (pred_log - target_log) ** 2
+        under_mask = (pred_schedule < target_schedule).float()
+        weights = torch.where(under_mask > 0, self.under_weight, 1.0)
 
-        masked_sq_error = sq_error * mask
-        num_valid = mask.sum() + self.eps
+        masked_sq_error = sq_error * mask * weights
+        num_valid = (mask * weights).sum() + self.eps
         schedule_loss = masked_sq_error.sum() / num_valid
 
         target_length_class = (target_length.squeeze(-1) - 1).clamp(
@@ -125,16 +138,46 @@ class RankScheduleLoss(nn.Module):
         else:
             mono_loss = torch.tensor(0.0, device=pred_schedule.device)
 
+        if pred_initial is not None:
+            init_target = target_schedule[:, :1]
+            init_mask = mask[:, :1]
+            init_log_diff = torch.abs(
+                torch.log(pred_initial.clamp(min=self.eps))
+                - torch.log(init_target.clamp(min=self.eps))
+            )
+            init_loss = (init_log_diff * init_mask).sum() / (init_mask.sum() + self.eps)
+        else:
+            init_loss = torch.tensor(0.0, device=pred_schedule.device)
+
+        batch_indices = torch.arange(target_length.size(0), device=pred_schedule.device)
+        final_positions = (target_length.squeeze(-1) - 1).clamp(
+            min=0, max=pred_schedule.size(1) - 1
+        )
+        pred_final = pred_schedule[batch_indices, final_positions]
+        target_final = target_schedule[batch_indices, final_positions]
+        final_under = (pred_final < target_final).float() * (
+            self.under_weight - 1.0
+        ) + 1.0
+        final_log_diff = torch.abs(
+            torch.log(pred_final.clamp(min=self.eps))
+            - torch.log(target_final.clamp(min=self.eps))
+        )
+        final_loss = (final_log_diff * final_under).mean()
+
         total_loss = (
             self.schedule_weight * schedule_loss
             + self.length_weight * length_loss
             + self.mono_weight * mono_loss
+            + self.initial_weight * init_loss
+            + self.final_weight * final_loss
         )
 
         loss_dict = {
             "schedule_loss": schedule_loss.item(),
             "length_loss": length_loss.item(),
             "mono_loss": mono_loss.item(),
+            "init_loss": init_loss.item(),
+            "final_loss": final_loss.item(),
             "total_loss": total_loss.item(),
         }
 
@@ -207,6 +250,8 @@ def train_epoch(
         "schedule_loss": 0.0,
         "length_loss": 0.0,
         "mono_loss": 0.0,
+        "init_loss": 0.0,
+        "final_loss": 0.0,
         "total_loss": 0.0,
     }
     num_batches = 0
@@ -224,7 +269,7 @@ def train_epoch(
         mask = batch.schedule_mask.view(-1, model.max_seq_len)
 
         with torch.amp.autocast(device_type="cuda", enabled=use_amp):
-            pred_schedule, pred_length_logits = model(
+            pred_schedule, pred_length_logits, pred_initial = model(
                 x=batch.x,
                 edge_index=batch.edge_index,
                 edge_attr=batch.edge_attr,
@@ -241,6 +286,7 @@ def train_epoch(
                 pred_length_logits=pred_length_logits,
                 target_length=target_length,
                 mask=mask,
+                pred_initial=pred_initial,
             )
 
             loss = loss / accumulation_steps
@@ -270,7 +316,7 @@ def train_epoch(
         num_batches += 1
 
         del batch, global_attr, target_schedule, target_length, mask
-        del pred_schedule, pred_length_logits, loss, loss_dict
+        del pred_schedule, pred_length_logits, pred_initial, loss, loss_dict
 
     if device.type == "cuda":
         torch.cuda.empty_cache()
@@ -304,6 +350,8 @@ def evaluate(
         "schedule_loss": 0.0,
         "length_loss": 0.0,
         "mono_loss": 0.0,
+        "init_loss": 0.0,
+        "final_loss": 0.0,
         "total_loss": 0.0,
     }
     total_samples = 0
@@ -339,7 +387,7 @@ def evaluate(
                 return_integers=False,
             )
 
-            pred_schedule_tf, pred_length_logits = model(
+            pred_schedule_tf, pred_length_logits, pred_initial_tf = model(
                 x=batch.x,
                 edge_index=batch.edge_index,
                 edge_attr=batch.edge_attr,
@@ -356,6 +404,7 @@ def evaluate(
                 pred_length_logits=pred_length_logits,
                 target_length=target_length,
                 mask=mask,
+                pred_initial=pred_initial_tf,
             )
 
         batch_size = target_length.size(0)
@@ -391,6 +440,7 @@ def evaluate(
             all_target_lengths.append(int(tgt_len))
 
         del pred_schedule, pred_lengths, pred_schedule_tf, pred_length_logits
+        del pred_initial_tf
         del loss, loss_dict, pred_log, target_log, log_ae, ae
         if device.type == "cuda":
             torch.cuda.empty_cache()
@@ -403,6 +453,8 @@ def evaluate(
         "schedule_loss": total_losses["schedule_loss"] / n,
         "length_loss": total_losses["length_loss"] / n,
         "mono_loss": total_losses["mono_loss"] / n,
+        "init_loss": total_losses["init_loss"] / n,
+        "final_loss": total_losses["final_loss"] / n,
         "log_mae": (
             total_log_mae / total_valid_positions if total_valid_positions > 0 else 0.0
         ),
@@ -485,6 +537,8 @@ def eval_report(
         f"  schedule loss (log-space mse): {test_metrics['schedule_loss']:.4f}"
     )
     report.append(f"  length loss (ce): {test_metrics['length_loss']:.4f}")
+    report.append(f"  init loss: {test_metrics['init_loss']:.4f}")
+    report.append(f"  final loss: {test_metrics['final_loss']:.4f}")
     report.append(f"  log mae: {test_metrics['log_mae']:.4f}")
     report.append(f"  mae: {test_metrics['mae']:.4f}")
     report.append(f"  length accuracy: {test_metrics['length_accuracy']:.2%}")
@@ -632,10 +686,28 @@ def main():
         help="Weight for length prediction loss",
     )
     parser.add_argument(
+        "--initial-weight",
+        type=float,
+        default=0.25,
+        help="Weight for auxiliary initial-rank regression loss",
+    )
+    parser.add_argument(
+        "--final-weight",
+        type=float,
+        default=0.25,
+        help="Weight for auxiliary final-rank regression loss",
+    )
+    parser.add_argument(
         "--label-smoothing",
         type=float,
         default=0.1,
         help="Label smoothing for length classification",
+    )
+    parser.add_argument(
+        "--under-weight",
+        type=float,
+        default=2.5,
+        help="Multiplier for under-prediction errors",
     )
     parser.add_argument(
         "--scheduler",
@@ -679,7 +751,7 @@ def main():
     parser.add_argument(
         "--decoder-hidden",
         type=int,
-        default=128,
+        default=64,
         help="Hidden dimension for decoder",
     )
     parser.add_argument(
@@ -794,6 +866,9 @@ def main():
         schedule_weight=args.schedule_weight,
         length_weight=args.length_weight,
         mono_weight=args.mono_weight,
+        initial_weight=args.initial_weight,
+        final_weight=args.final_weight,
+        under_weight=args.under_weight,
         label_smoothing=args.label_smoothing,
     )
 
@@ -847,6 +922,9 @@ def main():
         "schedule_weight": args.schedule_weight,
         "length_weight": args.length_weight,
         "mono_weight": args.mono_weight,
+        "initial_weight": args.initial_weight,
+        "final_weight": args.final_weight,
+        "under_weight": args.under_weight,
         "label_smoothing": args.label_smoothing,
         "scheduler": args.scheduler,
         "warmup_epochs": args.warmup_epochs,
@@ -858,7 +936,7 @@ def main():
 
     print("\nstarting training...")
     for epoch in range(1, args.epochs + 1):
-        if device.type == "cuda" and epoch % 50 == 0:
+        if device.type == "cuda" and epoch % 10 == 0:
             gc.collect()
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
@@ -867,7 +945,6 @@ def main():
         tf_ratio = get_teacher_forcing_ratio(
             epoch, args.epochs, args.tf_start, args.tf_end
         )
-
         train_losses = train_epoch(
             model,
             train_loader,
@@ -878,7 +955,6 @@ def main():
             scaler=scaler,
             accumulation_steps=args.accumulation_steps,
         )
-
         val_metrics = evaluate(
             model,
             val_loader,
@@ -928,6 +1004,8 @@ def main():
             "val_total_loss": val_metrics["total_loss"],
             "val_schedule_loss": val_metrics["schedule_loss"],
             "val_length_loss": val_metrics["length_loss"],
+            "val_init_loss": val_metrics["init_loss"],
+            "val_final_loss": val_metrics["final_loss"],
             "val_log_mae": val_metrics["log_mae"],
             "val_mae": val_metrics["mae"],
             "val_length_accuracy": val_metrics["length_accuracy"],

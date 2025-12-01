@@ -283,6 +283,7 @@ class SequenceDecoder(nn.Module):
         num_layers: int = 2,
         dropout: float = 0.1,
         max_seq_len: int = 16,
+        min_rank: float = 1.0,
     ) -> None:
         """Initialize SequenceDecoder.
 
@@ -292,11 +293,13 @@ class SequenceDecoder(nn.Module):
             num_layers: Number of LSTM layers
             dropout: Dropout probability
             max_seq_len: Maximum sequence length for generation
+            min_rank: Minimum rank value enforced through the initial prior
         """
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.max_seq_len = max_seq_len
+        self.min_rank = min_rank
 
         self.embed_rank = nn.Sequential(
             nn.Linear(1, hidden_dim // 2),
@@ -329,6 +332,13 @@ class SequenceDecoder(nn.Module):
             nn.Linear(hidden_dim, max_seq_len),
         )
 
+        self.initial_head = nn.Sequential(
+            nn.Linear(context_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(p=dropout),
+            nn.Linear(hidden_dim, 1),
+        )
+
     def _init_hidden(self, context: Tensor) -> Tuple[Tensor, Tensor]:
         """Initialize LSTM hidden state from context.
 
@@ -357,7 +367,8 @@ class SequenceDecoder(nn.Module):
         target_schedule: Optional[Tensor] = None,
         target_mask: Optional[Tensor] = None,
         teacher_forcing_ratio: float = 0.5,
-    ) -> Tuple[Tensor, Tensor]:
+        use_target_init: bool = True,
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         """Forward pass with optional teacher forcing.
 
         Args:
@@ -368,11 +379,14 @@ class SequenceDecoder(nn.Module):
                 valid positions in target_schedule
             teacher_forcing_ratio: Probability of using ground truth as
                 next input during training. 0.0 = fully autoregressive
+            use_target_init: If True and target_schedule is provided, seed the
+                decoder with the ground-truth initial rank instead of the prior
 
         Returns:
             Tuple of:
                 - predictions: Rank predictions [batch_size, max_seq_len]
                 - length_logits: Logits for sequence length [batch_size, max_seq_len]
+                - init_rank: Prior initial rank prediction [batch_size, 1]
         """
         batch_size = context.size(0)
         device = context.device
@@ -381,7 +395,13 @@ class SequenceDecoder(nn.Module):
 
         h, c = self._init_hidden(context)
 
-        current_input = torch.zeros(batch_size, 1, device=device)
+        init_rank = torch.nn.functional.softplus(self.initial_head(context)) + (
+            self.min_rank
+        )
+        if use_target_init and target_schedule is not None:
+            current_input = target_schedule[:, :1]
+        else:
+            current_input = init_rank
 
         predictions = []
         for t in range(self.max_seq_len):
@@ -404,7 +424,7 @@ class SequenceDecoder(nn.Module):
 
         predictions = torch.cat(predictions, dim=-1)
 
-        return predictions, length_logits
+        return predictions, length_logits, init_rank
 
     @torch.no_grad()
     def generate(
@@ -412,7 +432,7 @@ class SequenceDecoder(nn.Module):
         context: Tensor,
         min_rank: int = 1,
         temperature: float = 1.0,
-    ) -> Tuple[Tensor, Tensor]:
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         """Generate rank schedule autoregressively.
 
         Args:
@@ -424,6 +444,7 @@ class SequenceDecoder(nn.Module):
             Tuple of:
                 - schedule: Generated rank schedule [batch_size, predicted_length]
                 - lengths: Predicted sequence lengths [batch_size]
+                - init_rank: Initial rank prior [batch_size, 1]
         """
         batch_size = context.size(0)
         device = context.device
@@ -434,7 +455,10 @@ class SequenceDecoder(nn.Module):
 
         h, c = self._init_hidden(context)
 
-        current_input = torch.zeros(batch_size, 1, device=device)
+        init_rank = torch.nn.functional.softplus(self.initial_head(context)) + (
+            self.min_rank
+        )
+        current_input = init_rank
 
         predictions = []
         for t in range(self.max_seq_len):
@@ -449,4 +473,4 @@ class SequenceDecoder(nn.Module):
         schedule = torch.cat(predictions, dim=-1)
         schedule = schedule.clamp(min=min_rank)
 
-        return schedule, lengths
+        return schedule, lengths, init_rank

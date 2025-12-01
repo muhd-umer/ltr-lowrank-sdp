@@ -4,7 +4,7 @@ Model architecture for predicting rank schedules/trajectories.
 Example usage:
     >>> from model.net import RankSchedulePredictor
     >>> model = RankSchedulePredictor()
-    >>> schedule, lengths, length_logits = model(
+    >>> schedule, length_logits, init_rank = model(
     ...     x, edge_index, edge_attr, batch, global_attr
     ... )
     >>> print(schedule.shape)
@@ -238,6 +238,7 @@ class RankSchedulePredictor(nn.Module):
             num_layers=decoder_num_layers,
             dropout=dropout,
             max_seq_len=max_seq_len,
+            min_rank=1.0,
         )
 
     def forward(
@@ -250,7 +251,7 @@ class RankSchedulePredictor(nn.Module):
         target_schedule: Optional[Tensor] = None,
         target_mask: Optional[Tensor] = None,
         teacher_forcing_ratio: float = 0.5,
-    ) -> Tuple[Tensor, Tensor]:
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         """Forward pass for training.
 
         Args:
@@ -267,18 +268,19 @@ class RankSchedulePredictor(nn.Module):
             Tuple of:
                 - predictions: Rank predictions [batch_size, max_seq_len]
                 - length_logits: Logits for sequence length [batch_size, max_seq_len]
+                - init_rank: Prior initial rank prediction [batch_size, 1]
         """
 
         context = self.encoder(x, edge_index, edge_attr, batch, global_attr)
 
-        predictions, length_logits = self.decoder(
+        predictions, length_logits, init_rank = self.decoder(
             context,
             target_schedule=target_schedule,
             target_mask=target_mask,
             teacher_forcing_ratio=teacher_forcing_ratio,
         )
 
-        return predictions, length_logits
+        return predictions, length_logits, init_rank
 
     @torch.no_grad()
     def predict(
@@ -310,7 +312,7 @@ class RankSchedulePredictor(nn.Module):
         self.eval()
 
         context = self.encoder(x, edge_index, edge_attr, batch, global_attr)
-        schedule, lengths = self.decoder.generate(context, min_rank=min_rank)
+        schedule, lengths, _ = self.decoder.generate(context, min_rank=min_rank)
         if return_integers:
             schedule = torch.round(schedule).long().clamp(min=min_rank)
 
