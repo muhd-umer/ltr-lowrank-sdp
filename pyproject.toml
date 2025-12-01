@@ -16,6 +16,7 @@ dependencies = [
     "torch-spline-conv==1.2.2",
     "networkx>=3.5",
     "matplotlib>=3.10.7",
+    "optuna>=4.6.0",
 ]
 
 [tool.uv]
