@@ -300,6 +300,7 @@ class SequenceDecoder(nn.Module):
         self.num_layers = num_layers
         self.max_seq_len = max_seq_len
         self.min_rank = min_rank
+        self.context_dim = context_dim
 
         self.embed_rank = nn.Sequential(
             nn.Linear(1, hidden_dim // 2),
@@ -308,7 +309,7 @@ class SequenceDecoder(nn.Module):
         )
 
         self.lstm = nn.LSTM(
-            input_size=hidden_dim,
+            input_size=hidden_dim + context_dim,
             hidden_size=hidden_dim,
             num_layers=num_layers,
             batch_first=True,
@@ -406,7 +407,11 @@ class SequenceDecoder(nn.Module):
         predictions = []
         for t in range(self.max_seq_len):
             embedded = self.embed_rank(current_input.unsqueeze(-1))
-            output, (h, c) = self.lstm(embedded, (h, c))
+
+            ctx_input = context.unsqueeze(1)
+            lstm_input = torch.cat([embedded, ctx_input], dim=-1)
+
+            output, (h, c) = self.lstm(lstm_input, (h, c))
 
             log_rank = self.output_proj(output.squeeze(1))
             log_rank = torch.clamp(log_rank, min=-2.0, max=10.0)
@@ -463,7 +468,11 @@ class SequenceDecoder(nn.Module):
         predictions = []
         for t in range(self.max_seq_len):
             embedded = self.embed_rank(current_input.unsqueeze(-1))
-            output, (h, c) = self.lstm(embedded, (h, c))
+
+            ctx_input = context.unsqueeze(1)
+            lstm_input = torch.cat([embedded, ctx_input], dim=-1)
+
+            output, (h, c) = self.lstm(lstm_input, (h, c))
             log_rank = self.output_proj(output.squeeze(1))
             log_rank = torch.clamp(log_rank, min=-2.0, max=10.0)
             rank_pred = torch.exp(log_rank)
