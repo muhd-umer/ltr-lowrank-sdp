@@ -17,6 +17,7 @@ dependencies = [
     "networkx>=3.5",
     "matplotlib>=3.10.7",
     "optuna>=4.6.0",
+    "lion-pytorch>=0.2.3",
 ]
 
 [tool.uv]

@@ -26,7 +26,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
-
+from lion_pytorch import Lion
 from dataset.loader import create_dataloaders
 from model import RankSchedulePredictor
 
@@ -626,7 +626,7 @@ def main():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=300,
+        default=150,
         help="Number of training epochs",
     )
     parser.add_argument(
@@ -638,19 +638,25 @@ def main():
     parser.add_argument(
         "--accumulation-steps",
         type=int,
-        default=8,
+        default=4,
         help="Gradient accumulation steps (effective batch = batch-size * accumulation-steps)",
+    )
+    parser.add_argument(
+        "--max-grad-norm",
+        type=float,
+        default=1.1234679433994001,
+        help="Maximum gradient norm for clipping",
     )
     parser.add_argument(
         "--lr",
         type=float,
-        default=1e-3,
+        default=8e-4,
         help="Initial learning rate",
     )
     parser.add_argument(
         "--weight-decay",
         type=float,
-        default=1e-4,
+        default=1.573747653817477e-05,
         help="Weight decay (L2 regularization)",
     )
     parser.add_argument(
@@ -682,31 +688,31 @@ def main():
     parser.add_argument(
         "--length-weight",
         type=float,
-        default=0.5,
+        default=0.4749416614206206,
         help="Weight for length prediction loss",
     )
     parser.add_argument(
         "--initial-weight",
         type=float,
-        default=0.25,
+        default=0.2592933636834163,
         help="Weight for auxiliary initial-rank regression loss",
     )
     parser.add_argument(
         "--final-weight",
         type=float,
-        default=0.25,
+        default=0.2510823853369061,
         help="Weight for auxiliary final-rank regression loss",
     )
     parser.add_argument(
         "--label-smoothing",
         type=float,
-        default=0.1,
+        default=0.1851444764291703,
         help="Label smoothing for length classification",
     )
     parser.add_argument(
         "--under-weight",
         type=float,
-        default=2.5,
+        default=3.672829998335781,
         help="Multiplier for under-prediction errors",
     )
     parser.add_argument(
@@ -725,7 +731,7 @@ def main():
     parser.add_argument(
         "--mono-weight",
         type=float,
-        default=0.0,
+        default=0.0009193765861575161,
         help="Weight for monotonicity penalty (0 to disable)",
     )
 
@@ -733,7 +739,7 @@ def main():
     parser.add_argument(
         "--hidden-dim",
         type=int,
-        default=128,
+        default=64,
         help="Hidden dimension for GNN layers",
     )
     parser.add_argument(
@@ -763,7 +769,7 @@ def main():
     parser.add_argument(
         "--dropout",
         type=float,
-        default=0.1,
+        default=0.05785034823266369,
         help="Dropout probability",
     )
 
@@ -872,12 +878,7 @@ def main():
         label_smoothing=args.label_smoothing,
     )
 
-    optimizer = AdamW(
-        model.parameters(),
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        betas=(0.9, 0.999),
-    )
+    optimizer = Lion(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     if args.scheduler == "cosine":
         scheduler = CosineAnnealingLR(
@@ -953,6 +954,7 @@ def main():
             device,
             teacher_forcing_ratio=tf_ratio,
             scaler=scaler,
+            max_grad_norm=args.max_grad_norm,
             accumulation_steps=args.accumulation_steps,
         )
         val_metrics = evaluate(
