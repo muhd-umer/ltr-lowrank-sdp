@@ -878,7 +878,7 @@ def main():
         label_smoothing=args.label_smoothing,
     )
 
-    optimizer = Lion(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     if args.scheduler == "cosine":
         scheduler = CosineAnnealingLR(
