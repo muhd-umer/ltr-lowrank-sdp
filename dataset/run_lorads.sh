@@ -73,7 +73,7 @@ get_lorads_params() {
         heuristic_factor="10.0"
     fi
 
-    echo "--phase1Tol $phase1_tol --heuristicFactor $heuristic_factor --timesLogRank $times_log_rank --rhoMax $rho_max --timeSecLimit $TIMEOUT_DURATION --reoptLevel 0"
+    echo "--phase1Tol $phase1_tol --heuristicFactor $heuristic_factor --timesLogRank $times_log_rank --rhoMax $rho_max --timeSecLimit $TIMEOUT_DURATION"
 }
 
 echo "running LoRADS on all problem instances in $DATA_DIR"
