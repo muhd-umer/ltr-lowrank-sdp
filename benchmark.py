@@ -23,10 +23,10 @@ from tabulate import tabulate
 from model import RankSchedulePredictor
 
 LORADS_EXECUTABLE = "./lorads/src/build/LoRADS_v_2_0_1-alpha"
-BENCHMARK_DIR = Path("benchmarks")
+BENCHMARK_DIR = Path("benchmark")
 INSTANCES_DIR = BENCHMARK_DIR / "instances"
 PT_DIR = BENCHMARK_DIR / "pt"
-CHECKPOINT_PATH = Path("logs/all_t/best_model.pt")
+CHECKPOINT_PATH = Path("ckpts/b_all_t/best_model.pt")
 DEFAULT_TIMEOUT = 300
 NEAR_STALL_FACTOR = 0.7
 
@@ -181,9 +181,6 @@ def get_lorads_params(problem_name: str, subtype: str) -> Dict[str, str]:
             params["phase1Tol"] = "1e-2"
             params["heuristicFactor"] = "10.0"
 
-    elif subtype == "hansmittel":
-        params["reoptLevel"] = "2"
-
     elif subtype == "matcomp":
         if name_lower.startswith("mc_"):
             mc_n_str = name_lower.replace("mc_", "").split("_")[0]
@@ -223,6 +220,7 @@ def run_lorads(
     instance_path: Path,
     json_output_path: Path,
     params: Dict[str, str],
+    fixed_rank: Optional[int] = None,
     rank_schedule_path: Optional[Path] = None,
 ) -> Tuple[bool, Optional[float], Optional[float]]:
     """Run LoRADS solver on an instance.
@@ -231,7 +229,8 @@ def run_lorads(
         instance_path: path to .dat-s file
         json_output_path: path for output json file
         params: solver parameters
-        rank_schedule_path: optional path to rank schedule json
+        fixed_rank: optional fixed rank (mutually exclusive with rank_schedule_path)
+        rank_schedule_path: optional path to rank schedule json (mutually exclusive with fixed_rank)
 
     Returns:
         tuple of (success, solve_time_sec, objective)
@@ -244,10 +243,15 @@ def run_lorads(
         cmd.extend([f"--{param_name}", param_value])
 
     cmd.extend(["--jsonfile", str(json_output_path)])
+    cmd.extend(["--disableOracle"])
 
+    if fixed_rank is not None and rank_schedule_path is not None:
+        raise ValueError("fixed_rank and rank_schedule_path are mutually exclusive")
     if rank_schedule_path is not None:
         cmd.extend(["--rankSchedule", str(rank_schedule_path)])
         cmd.extend(["--nearStallFactor", str(NEAR_STALL_FACTOR)])
+    elif fixed_rank is not None:
+        cmd.extend(["--fixedRank", str(fixed_rank)])
 
     try:
         result = subprocess.run(
@@ -342,6 +346,7 @@ def run_benchmark(
     subtype: str,
     instance_name: str,
     output_dir: Path,
+    use_rank_schedule: bool = False,
 ) -> Optional[Dict]:
     """Run benchmark for a single instance.
 
@@ -351,6 +356,7 @@ def run_benchmark(
         subtype: problem subtype
         instance_name: problem name
         output_dir: directory for outputs
+        use_rank_schedule: if True, use full rank schedule; if False (default), use fixed rank
 
     Returns:
         dict with benchmark results or None on failure
@@ -371,19 +377,32 @@ def run_benchmark(
     r_sched_path = instance_output_dir / "r_sched.json"
     save_rank_schedule(schedule, r_sched_path)
 
+    final_rank = schedule[-1] if schedule else None
+    if use_rank_schedule:
+        print(f"  using rank schedule (length={len(schedule)})")
+    else:
+        print(f"  using fixed rank: {final_rank}")
+
     params = get_lorads_params(instance_name, subtype)
 
     print(f"  running original lorads...")
     sol_lorads_path = instance_output_dir / "sol_lorads.json"
     lorads_success, lorads_time, lorads_obj = run_lorads(
-        instance_path, sol_lorads_path, params, rank_schedule_path=None
+        instance_path, sol_lorads_path, params
     )
 
-    print(f"  running with rank schedule...")
-    sol_rsched_path = instance_output_dir / "sol_rsched.json"
-    rsched_success, rsched_time, rsched_obj = run_lorads(
-        instance_path, sol_rsched_path, params, rank_schedule_path=r_sched_path
-    )
+    if use_rank_schedule:
+        print(f"  running with rank schedule...")
+        sol_rsched_path = instance_output_dir / "sol_rsched.json"
+        rsched_success, rsched_time, rsched_obj = run_lorads(
+            instance_path, sol_rsched_path, params, rank_schedule_path=r_sched_path
+        )
+    else:
+        print(f"  running with fixed rank...")
+        sol_rsched_path = instance_output_dir / "sol_rsched.json"
+        rsched_success, rsched_time, rsched_obj = run_lorads(
+            instance_path, sol_rsched_path, params, fixed_rank=final_rank
+        )
 
     result = {
         "instance": instance_name,
@@ -528,6 +547,12 @@ def main():
         action="store_true",
         help="List available instances for the subtype(s) and exit",
     )
+    parser.add_argument(
+        "--rank-schedule",
+        action="store_true",
+        default=False,
+        help="Use full rank schedule instead of fixed rank (default: use fixed rank)",
+    )
 
     args = parser.parse_args()
     _config["timeout"] = args.timeout
@@ -603,7 +628,9 @@ def main():
         for i, instance_name in enumerate(instances, 1):
             total_instances += 1
             print(f"\n[{i}/{len(instances)}] {subtype}/{instance_name}")
-            result = run_benchmark(model, device, subtype, instance_name, output_dir)
+            result = run_benchmark(
+                model, device, subtype, instance_name, output_dir, args.rank_schedule
+            )
             if result:
                 all_results.append(result)
 
