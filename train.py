@@ -650,7 +650,7 @@ def main():
     parser.add_argument(
         "--lr",
         type=float,
-        default=8e-4,
+        default=5.123413251903491e-04,
         help="Initial learning rate",
     )
     parser.add_argument(
@@ -718,7 +718,7 @@ def main():
     parser.add_argument(
         "--scheduler",
         type=str,
-        default="plateau",
+        default="cosine",
         choices=["cosine", "plateau"],
         help="Learning rate scheduler type",
     )

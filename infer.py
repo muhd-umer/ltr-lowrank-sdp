@@ -13,13 +13,14 @@ Example usage:
 
 import argparse
 import json
+import random
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import torch
 from tqdm import tqdm
 
-from dataset.loader import extract_rank_schedule
+from dataset.loader import extract_rank_schedule, SDPDataset
 from model import RankSchedulePredictor
 
 
@@ -327,8 +328,12 @@ def run_batch_inference(
     device: torch.device,
     output_path: Optional[Path] = None,
     max_seq_len: int = 16,
+    seed: int = 42,
+    train_split: float = 0.9,
+    val_split: float = 0.05,
+    test_split: float = 0.05,
 ) -> Dict:
-    """Run inference on all instances in the dataset.
+    """Run inference on test set instances.
 
     Args:
         model: Trained RankSchedulePredictor model
@@ -336,14 +341,36 @@ def run_batch_inference(
         device: Device to run on
         output_path: Optional path to save results JSON
         max_seq_len: Maximum sequence length
+        seed: Random seed for reproducible split (default: 42)
+        train_split: Fraction of data for training (default: 0.9)
+        val_split: Fraction of data for validation (default: 0.05)
+        test_split: Fraction of data for testing (default: 0.05)
     Returns:
         Dictionary with aggregated results and statistics
     """
     proc_dir = data_root / "proc"
     sol_dir = data_root / "sol_json"
 
-    pt_files = sorted(proc_dir.glob("*.pt"))
-    print(f"\nrunning batch inference on {len(pt_files)} instances...")
+    dataset = SDPDataset(root=str(data_root), max_schedule_length=max_seq_len)
+    num_samples = len(dataset)
+
+    if num_samples == 0:
+        raise ValueError(f"no valid samples found in {data_root}")
+
+    indices = list(range(num_samples))
+    random.seed(seed)
+    random.shuffle(indices)
+
+    train_end = int(train_split * num_samples)
+    val_end = int((train_split + val_split) * num_samples)
+    test_indices = indices[val_end:]
+
+    test_names = [dataset.valid_names[i] for i in test_indices]
+    pt_files = [proc_dir / f"{name}.pt" for name in test_names]
+
+    print(
+        f"\nrunning batch inference on {len(pt_files)} test instances (out of {num_samples} total)..."
+    )
 
     results = []
     all_metrics = {
@@ -496,6 +523,12 @@ def main():
         choices=["auto", "cuda", "cpu"],
         help="Device to use for inference",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducible train/val/test split (default: 42)",
+    )
 
     args = parser.parse_args()
 
@@ -523,7 +556,9 @@ def main():
     if args.batch:
 
         output_path = Path(args.output) if args.output else None
-        run_batch_inference(model, data_root, device, output_path, model.max_seq_len)
+        run_batch_inference(
+            model, data_root, device, output_path, model.max_seq_len, seed=args.seed
+        )
     else:
 
         input_path = resolve_input_path(args.input, data_root)
