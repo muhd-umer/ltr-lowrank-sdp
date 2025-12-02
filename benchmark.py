@@ -430,15 +430,7 @@ def print_results_table(results: List[Dict]) -> None:
     Args:
         results: list of benchmark result dicts
     """
-    headers = [
-        "instance",
-        "subtype",
-        "LoRADS (s)",
-        "rankSched (s)",
-        "speedup",
-        "LoRADS obj",
-        "rSched obj",
-    ]
+    headers = ["instance", "subtype", "LoRADS (s)", "rankSched (s)", "speedup"]
 
     rows = []
     for r in results:
@@ -450,20 +442,7 @@ def print_results_table(results: List[Dict]) -> None:
         else:
             speedup = "N/A"
 
-        lorads_obj = f"{r['lorads_obj']:.4f}" if r["lorads_obj"] else "N/A"
-        rsched_obj = f"{r['rsched_obj']:.4f}" if r["rsched_obj"] else "N/A"
-
-        rows.append(
-            [
-                r["instance"],
-                r["subtype"],
-                lorads_time,
-                rsched_time,
-                speedup,
-                lorads_obj,
-                rsched_obj,
-            ]
-        )
+        rows.append([r["instance"], r["subtype"], lorads_time, rsched_time, speedup])
 
     print(tabulate(rows, headers=headers, tablefmt="grid"))
 
