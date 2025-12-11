@@ -9,16 +9,13 @@ from model.layers import (
 from model.net import GNNEncoder, RankPredictor, RankSchedulePredictor
 
 __all__ = [
-    # main model
     "RankSchedulePredictor",
     "RankPredictor",
     "GNNEncoder",
-    # layers
     "NodeEncoder",
     "EdgeEncoder",
     "GlobalEncoder",
     "AttentionPooling",
     "MLPBlock",
-    # decoder
     "SequenceDecoder",
 ]
