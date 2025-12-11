@@ -3,7 +3,7 @@
 Semidefinite programming (SDP) is a powerful framework from convex optimization with applications across machine learning, control theory, and combinatorial optimization. Recent low-rank methods like LoRADS and HaLLAR achieve scalability by exploiting the Burer-Monteiro factorization and are able to solve problems with millions of variables in minutes. However, these methods rely on hand-crafted heuristics for rank selection which happens to be a key hyperparameter that fundamentally determines solver performance. We introduce a graph neural network approach that learns to predict optimal rank trajectories directly from problem structure. In our approach, SDPs are represented as constraint graphs and using graph attention networks with LSTM-based rank trajectory prediction, our method eliminates expensive trial-and-error rank adjustments. Experimental results on MaxCut, SDPLIB, and Mittelmann benchmarks demonstrate speedups of up to $3\times$ on large-scale problems, with the model learning interpretable structure-to-rank mappings across various problem classes.
 
 <p align="center">
-  <img src="resources/pipeline.png" alt="pipeline" width="600"/>
+  <img src="resources/pipeline.png" alt="pipeline" width="700"/>
 </p>
 
 ## Project structure
@@ -55,7 +55,7 @@ Ensure the LoRADS binary is executable and placed correctly for `benchmark.py` t
 
 The model operates on graph representations of SDP instances. To convert standard SDPA sparse format files (`.dat-s`) into PyG data objects (`.pt`):
 ```bash
-python -m dataset.processor --input data/problem.dat-s --output dataset/proc/problem.pt
+python -m dataset.processor --input "path/to/<file_name>.dat-s" --output "path/to/<file_name>.pt"
 ```
 
 The processor extracts:
@@ -90,12 +90,12 @@ python tune.py --trials 50 --epochs 80 --param-budget 600000
 
 To predict a rank schedule for a specific instance using a trained checkpoint:
 ```bash
-python infer.py --checkpoint logs/best_model.pt --input dataset/proc/G1.pt
+python infer.py --checkpoint "path/to/model.pt" --input "dataset/proc/<file_name>.pt"
 ```
 
 To run batch inference on the test set and calculate metrics:
 ```bash
-python infer.py --checkpoint logs/best_model.pt --batch --output results.json
+python infer.py --checkpoint "path/to/model.pt" --batch --output "results.json"
 ```
 
 ### Benchmarking
@@ -125,7 +125,7 @@ The script will; **a)** predict the rank schedule using the GNN model, **b)** ru
   <img src="resources/decoder.png" alt="decoder" width="45%" style="display:inline-block"/>
 </p>
 
-### Loss Function
+### Loss function
 The model is trained using a multi-objective loss:
 - *Schedule loss.* Masked Log-MSE to handle scale invariance
 - *Length loss.* Cross-entropy for schedule length classification
