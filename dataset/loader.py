@@ -114,12 +114,14 @@ class SDPDataset(Dataset):
         root: Root directory containing 'proc/' and 'sol_json/' subdirectories
         max_schedule_length: Maximum length for padded schedules
         valid_names: List of problem names that have both .pt and .json files
+        exclude_names: Optional set of problem names to exclude from dataset
     """
 
     def __init__(
         self,
         root: str,
         max_schedule_length: int = 16,
+        exclude_names: List[str] = None,
         transform=None,
         pre_transform=None,
         pre_filter=None,
@@ -130,6 +132,7 @@ class SDPDataset(Dataset):
             root: Root directory path (should contain 'proc/' and 'sol_json/')
             max_schedule_length: Maximum length for rank schedule sequences
                 Schedules longer than this are truncated; shorter ones are padded
+            exclude_names: Optional list of problem names to exclude from dataset
             transform: Optional transform to apply to each data object
             pre_transform: Optional pre-transform (not used, for API compat)
             pre_filter: Optional pre-filter (not used, for API compat)
@@ -138,6 +141,7 @@ class SDPDataset(Dataset):
         self.proc_dir = self._root / "proc"
         self.sol_dir = self._root / "sol_json"
         self.max_schedule_length = max_schedule_length
+        self.exclude_names = set(exclude_names) if exclude_names else set()
 
         self.valid_names = self._find_valid_samples()
 
@@ -150,7 +154,8 @@ class SDPDataset(Dataset):
         """Finds problem names that have both .pt and .json files.
 
         Returns:
-            Sorted list of valid problem names (without extensions)
+            Sorted list of valid problem names (without extensions),
+            excluding any names in self.exclude_names
         """
         pt_files = set()
         if self.proc_dir.exists():
@@ -163,6 +168,7 @@ class SDPDataset(Dataset):
                 json_files.add(f.stem)
 
         valid = pt_files & json_files
+        valid = valid - self.exclude_names
         return sorted(list(valid))
 
     def len(self) -> int:
@@ -258,6 +264,31 @@ class SDPDataset(Dataset):
         return NUM_GLOBAL_FEATURES
 
 
+def get_benchmark_names(benchmark_dir: str = "benchmark") -> List[str]:
+    """Get list of benchmark problem names by scanning benchmark directory.
+
+    Args:
+        benchmark_dir: Root directory containing benchmark files
+
+    Returns:
+        List of problem names (without extensions) found in benchmark directory
+    """
+    benchmark_path = Path(benchmark_dir)
+    benchmark_names = set()
+
+    pt_dir = benchmark_path / "pt"
+    if pt_dir.exists():
+        for pt_file in pt_dir.rglob("*.pt"):
+            benchmark_names.add(pt_file.stem)
+
+    dat_s_dir = benchmark_path / "instances"
+    if dat_s_dir.exists():
+        for dat_file in dat_s_dir.rglob("*.dat-s"):
+            benchmark_names.add(dat_file.stem)
+
+    return sorted(list(benchmark_names))
+
+
 def create_dataloaders(
     root: str,
     batch_size: int = 32,
@@ -267,6 +298,7 @@ def create_dataloaders(
     val_split: float = 0.05,
     test_split: float = 0.05,
     max_schedule_length: int = 16,
+    exclude_names: List[str] = None,
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """Creates train/val/test DataLoaders with configurable split ratios.
 
@@ -279,6 +311,7 @@ def create_dataloaders(
         val_split: Fraction of data for validation
         test_split: Fraction of data for testing
         max_schedule_length: Maximum length for padded rank schedules
+        exclude_names: Optional list of problem names to exclude from dataset
 
     Returns:
         Tuple of (train_loader, val_loader, test_loader)
@@ -293,7 +326,11 @@ def create_dataloaders(
             f"({train_split} + {val_split} + {test_split})"
         )
 
-    dataset = SDPDataset(root=root, max_schedule_length=max_schedule_length)
+    dataset = SDPDataset(
+        root=root,
+        max_schedule_length=max_schedule_length,
+        exclude_names=exclude_names,
+    )
     num_samples = len(dataset)
 
     if num_samples == 0:

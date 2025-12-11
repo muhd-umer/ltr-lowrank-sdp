@@ -27,7 +27,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 from lion_pytorch import Lion
-from dataset.loader import create_dataloaders
+from dataset.loader import create_dataloaders, get_benchmark_names
 from model import RankSchedulePredictor
 
 
@@ -610,6 +610,20 @@ def main():
         help="Path to dataset root directory",
     )
     parser.add_argument(
+        "--benchmark-dir",
+        type=str,
+        default="benchmark",
+        help="Path to benchmark directory",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="default",
+        choices=["default", "prac"],
+        help="Training mode: 'default' uses train/val/test split on all data, "
+        "'prac' trains on all files except benchmark ones",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -824,6 +838,14 @@ def main():
     log_dir.mkdir(parents=True, exist_ok=True)
     print(f"logging to: {log_dir}")
 
+    exclude_names = None
+    if args.mode == "prac":
+        print(f"\nmode: prac (excluding benchmark files)")
+        exclude_names = get_benchmark_names(args.benchmark_dir)
+        print(f"  excluding {len(exclude_names)} benchmark files")
+    else:
+        print(f"\nmode: default (using all files with train/val/test split)")
+
     print("\nloading dataset...")
     train_loader, val_loader, test_loader = create_dataloaders(
         root=args.data_root,
@@ -831,6 +853,7 @@ def main():
         seed=args.seed,
         num_workers=args.num_workers,
         max_schedule_length=args.max_seq_len,
+        exclude_names=exclude_names,
     )
     print(f"  train samples: {len(train_loader.dataset)}")
     print(f"  val samples: {len(val_loader.dataset)}")
@@ -910,6 +933,8 @@ def main():
     training_log: List[Dict] = []
 
     training_config = {
+        "mode": args.mode,
+        "num_excluded_files": len(exclude_names) if exclude_names else 0,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "accumulation_steps": args.accumulation_steps,

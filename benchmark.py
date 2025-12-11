@@ -26,6 +26,7 @@ LORADS_EXECUTABLE = "./lorads/src/build/LoRADS_v_2_0_1-alpha"
 BENCHMARK_DIR = Path("benchmark")
 INSTANCES_DIR = BENCHMARK_DIR / "instances"
 PT_DIR = BENCHMARK_DIR / "pt"
+SOL_JSON_DIR = Path("dataset/sol_json")
 CHECKPOINT_PATH = Path("ckpts/b_all_t/best_model.pt")
 DEFAULT_TIMEOUT = 300
 NEAR_STALL_FACTOR = 0.7
@@ -145,7 +146,6 @@ def get_lorads_params(problem_name: str, subtype: str) -> Dict[str, str]:
     params = {
         "phase1Tol": "1e-3",
         "heuristicFactor": "1.0",
-        "timesLogRank": "2.0",
         "rhoMax": "5000.0",
         "timeSecLimit": str(_config["timeout"]),
         "reoptLevel": "0",
@@ -430,32 +430,25 @@ def print_results_table(results: List[Dict]) -> None:
     Args:
         results: list of benchmark result dicts
     """
-    headers = ["instance", "subtype", "LoRADS (s)", "rankSched (s)", "speedup"]
+    headers = ["instance", "subtype", "LoRADS (s)", "rankSched (s)"]
 
     rows = []
     for r in results:
         lorads_time = f"{r['lorads_time']:.2f}" if r["lorads_time"] else "FAIL"
         rsched_time = f"{r['rsched_time']:.2f}" if r["rsched_time"] else "FAIL"
 
-        if r["speedup"] is not None:
-            speedup = f"{r['speedup']:.2f}x"
-        else:
-            speedup = "N/A"
-
-        rows.append([r["instance"], r["subtype"], lorads_time, rsched_time, speedup])
+        rows.append([r["instance"], r["subtype"], lorads_time, rsched_time])
 
     print(tabulate(rows, headers=headers, tablefmt="grid"))
 
-    valid_speedups = [r["speedup"] for r in results if r["speedup"] is not None]
-    if valid_speedups:
-        avg_speedup = sum(valid_speedups) / len(valid_speedups)
-        print(f"\naverage speedup >> {avg_speedup:.2f}x")
-        print(
-            f"instances faster with rank schedule >> {sum(1 for s in valid_speedups if s > 1)}/{len(valid_speedups)}"
-        )
-        print(
-            f"instances slower with rank schedule >> {sum(1 for s in valid_speedups if s < 1)}/{len(valid_speedups)}"
-        )
+
+def load_results_from_logs(logs_dir: Path) -> List[Dict]:
+    """Load benchmark results from a logs directory."""
+    results_path = logs_dir / "results.json"
+    if results_path.exists():
+        with open(results_path) as f:
+            return json.load(f)
+    return []
 
 
 def main():
@@ -529,12 +522,39 @@ def main():
     parser.add_argument(
         "--rank-schedule",
         action="store_true",
-        default=False,
-        help="Use full rank schedule instead of fixed rank (default: use fixed rank)",
+        default=True,
+        help="Use full rank schedule (default)",
+    )
+    parser.add_argument(
+        "--fixed-rank",
+        action="store_false",
+        dest="rank_schedule",
+        help="Use fixed rank instead of rank schedule",
+    )
+    parser.add_argument(
+        "--print-res-from-logs",
+        type=str,
+        default=None,
+        metavar="LOGS_DIR",
+        help="Skip benchmarking and print results table from existing logs directory",
     )
 
     args = parser.parse_args()
     _config["timeout"] = args.timeout
+
+    if args.print_res_from_logs:
+        logs_dir = Path(args.print_res_from_logs)
+        if not logs_dir.exists():
+            print(f"[error] logs directory not found: {logs_dir}")
+            sys.exit(1)
+        results = load_results_from_logs(logs_dir)
+        if results:
+            print(f"\n[results from {logs_dir}]")
+            print_results_table(results)
+        else:
+            print(f"[error] no results.json found in {logs_dir}")
+            sys.exit(1)
+        return
 
     if args.instance and not args.subtype:
         parser.error("--instance requires --subtype")
